@@ -12,6 +12,9 @@ const LS = {
   kg: "entreno.kg",
 };
 
+const STANDALONE = window.navigator.standalone === true || window.matchMedia("(display-mode: standalone)").matches;
+document.documentElement.classList.toggle("standalone", STANDALONE);
+
 const $app = document.getElementById("app");
 const $title = document.getElementById("title");
 const $back = document.getElementById("backBtn");
@@ -305,6 +308,7 @@ let ticker = null;
 
 function go(view, params = {}) {
   route = { view, ...params };
+  document.body.classList.remove("nav-hidden");
   render();
   window.scrollTo(0, 0);
 }
@@ -502,6 +506,14 @@ function renderHome() {
       <div class="eyebrow">${esc(today)}</div>
       <div class="home-title">${esc(plan.name || "Entreno")}</div>
     </header>
+    ${
+      !STANDALONE && !prefs.hideInstall && /iPhone|iPad|iPod/.test(navigator.userAgent)
+        ? `<div class="install-tip">
+             <div><b>Úsala a pantalla completa</b><span>En Safari toca <i class="share-glyph" aria-label="Compartir"></i> y luego <b>Agregar a pantalla de inicio</b>. Ábrela desde ese ícono y desaparece la barra del navegador.</span></div>
+             <button class="text-btn" data-act="hideInstall" aria-label="Cerrar aviso">Cerrar</button>
+           </div>`
+        : ""
+    }
     ${hero || `<p class="muted">Tu pauta no tiene días. Edítala en Ajustes.</p>`}
     ${weekStripHtml()}
     ${otherDays}
@@ -536,6 +548,11 @@ function renderHome() {
       }
     },
     history: () => go("history"),
+    hideInstall: () => {
+      prefs.hideInstall = true;
+      save(LS.prefs, prefs);
+      render();
+    },
   });
 }
 
@@ -1448,6 +1465,29 @@ function renderSettings() {
     },
   });
 }
+
+// ---------- ocultar barras al hacer scroll ----------
+// Bajando: se esconden el menú inferior y la barra superior. Subiendo o cerca del borde: vuelven.
+(() => {
+  let lastY = window.scrollY;
+  let ticking = false;
+  const update = () => {
+    ticking = false;
+    const y = Math.max(0, window.scrollY);
+    const nearBottom = window.innerHeight + y >= document.documentElement.scrollHeight - 8;
+    const dy = y - lastY;
+    if (y < 40 || nearBottom) document.body.classList.remove("nav-hidden");
+    else if (dy > 6) document.body.classList.add("nav-hidden");
+    else if (dy < -6) document.body.classList.remove("nav-hidden");
+    if (Math.abs(dy) > 6 || y < 40) lastY = y;
+  };
+  window.addEventListener("scroll", () => {
+    if (!ticking) {
+      ticking = true;
+      requestAnimationFrame(update);
+    }
+  }, { passive: true });
+})();
 
 // ---------- inicio ----------
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
