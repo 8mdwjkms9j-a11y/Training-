@@ -26,11 +26,14 @@ document.documentElement.classList.toggle("standalone", STANDALONE);
 const $shell = document.getElementById("shell");
 function setAppHeight() {
   const portrait = window.matchMedia("(orientation: portrait)").matches;
-  let h = window.innerHeight;
-  if (STANDALONE && portrait && screen.height > h && screen.height - h < 200) h = screen.height;
+  // En la app de inicio la vista ocupa toda la pantalla: screen.height es la medida fiable
+  // (iOS a veces informa innerHeight más corto y la app se ve cortada abajo).
+  const h = STANDALONE && portrait ? Math.max(screen.height, window.innerHeight) : window.innerHeight;
   document.documentElement.style.setProperty("--app-h", h + "px");
 }
 setAppHeight();
+window.addEventListener("pageshow", setAppHeight);
+document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && setAppHeight());
 window.addEventListener("resize", setAppHeight);
 window.addEventListener("orientationchange", () => setTimeout(setAppHeight, 300));
 // si iOS desplaza la ventana (p. ej. al cerrar el teclado), la devolvemos a su lugar
@@ -521,13 +524,6 @@ const STATE_LABEL = { work: "En ejercicio", prep: "Prepárate", side: "Cambia de
 function render() {
   const state = currentState();
   const changed = lastState !== null && state !== lastState && route.view === "workout";
-  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if (changed && document.startViewTransition && !reduce && !render.inVT) {
-    render.inVT = true;
-    const vt = document.startViewTransition(() => renderNow(state, changed));
-    vt.finished.finally(() => (render.inVT = false));
-    return;
-  }
   renderNow(state, changed);
 }
 
@@ -762,6 +758,7 @@ function renderHome() {
     },
     discard: async () => {
       if (await ask("¿Descartar el entrenamiento en curso?", "Descartar")) {
+        cancelScheduled();
         session = null;
         save(LS.session, null);
         keepAwake(false);
@@ -926,8 +923,48 @@ const curStep = () => session.steps[session.i];
 const curEx = () => curDay().exercises[curStep().ex];
 
 // --- temporizador basado en hora real (sigue funcionando si se bloquea la pantalla)
+let scheduledNodes = [];
+function cancelScheduled() {
+  scheduledNodes.forEach((o) => {
+    try {
+      o.stop();
+    } catch {}
+  });
+  scheduledNodes = [];
+}
+function scheduleTone(at, freq, dur, vol) {
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, at);
+  g.gain.exponentialRampToValueAtTime(vol, at + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+  o.connect(g).connect(audioCtx.destination);
+  o.start(at);
+  o.stop(at + dur + 0.03);
+  scheduledNodes.push(o);
+}
+// Agenda la cuenta 3-2-1 y el aviso final con el reloj del audio: suenan a tiempo
+// aunque la pantalla se trabe un instante.
+function scheduleTimerSounds() {
+  cancelScheduled();
+  const t = session?.timer;
+  if (!t || !t.running) return;
+  t.sched = false;
+  if (!prefs.sound || !audioCtx || audioCtx.state !== "running") return;
+  const left = (t.endsAt - Date.now()) / 1000;
+  const now = audioCtx.currentTime + 0.02;
+  [3, 2, 1].forEach((k) => left - k > 0.05 && scheduleTone(now + left - k, 660, 0.1, 0.5));
+  const end = now + Math.max(0, left);
+  const work = session.phase === "work";
+  scheduleTone(end, 990, work ? 0.25 : 0.3, 0.5);
+  scheduleTone(end + (work ? 0.33 : 0.38), 990, work ? 0.25 : 0.3, 0.5);
+  t.sched = true;
+}
+
 function timerStart(seconds) {
   session.timer = { running: true, total: seconds, endsAt: Date.now() + seconds * 1000, remaining: seconds, lastBeep: null };
+  scheduleTimerSounds();
   persist();
 }
 function timerPause() {
@@ -935,6 +972,7 @@ function timerPause() {
   if (!t || !t.running) return;
   t.remaining = Math.max(0, (t.endsAt - Date.now()) / 1000);
   t.running = false;
+  cancelScheduled();
   persist();
 }
 function timerResume() {
@@ -942,6 +980,7 @@ function timerResume() {
   if (!t || t.running) return;
   t.endsAt = Date.now() + t.remaining * 1000;
   t.running = true;
+  scheduleTimerSounds();
   persist();
 }
 function timerLeft() {
@@ -959,7 +998,7 @@ function tick() {
   if (t && t.running) {
     const left = timerLeft();
     const whole = Math.ceil(left);
-    if (whole <= 3 && whole > 0 && t.lastBeep !== whole) {
+    if (!t.sched && whole <= 3 && whole > 0 && t.lastBeep !== whole) {
       t.lastBeep = whole;
       beep(660, 0.1);
     }
@@ -971,19 +1010,20 @@ function tick() {
     }
   }
   if (route.view === "workout") paintLive();
-  if (Date.now() - npAt > 900) {
+  if (Date.now() - npAt > 1500) {
     npAt = Date.now();
     updateNowPlaying();
   }
 }
 
 function onTimerDone() {
+  const sched = session.timer?.sched;
   if (session.phase === "work") {
-    beep(990, 0.25, 2);
+    if (!sched) beep(990, 0.25, 2);
     buzz([200, 100, 200]);
     logSet({ time: curEx().time });
   } else {
-    beep(990, 0.3, 2);
+    if (!sched) beep(990, 0.3, 2);
     buzz([300, 100, 300]);
     if (!(prefs.autoStart && (curEx().time || hasMetro(curEx())))) say(curStep().side === 2 ? "Otro lado" : "¡Vamos!");
     beginWork(true);
@@ -1148,6 +1188,7 @@ function logSet(entry) {
 }
 
 function beginWork(auto = false) {
+  cancelScheduled();
   session.phase = "work";
   session.timer = null;
   session.metro = null;
@@ -1183,6 +1224,7 @@ function jumpStep(delta) {
 }
 
 function finishSession() {
+  cancelScheduled();
   const day = curDay();
   const entry = {
     date: Date.now(),
@@ -1396,6 +1438,7 @@ function renderWorkout() {
       render();
     },
     resetTimed: () => {
+      cancelScheduled();
       session.timer = null;
       persist();
       render();
@@ -1438,6 +1481,7 @@ function adjustTimer(delta) {
   else t.remaining = Math.max(0, t.remaining + delta);
   t.total = Math.max(t.total + delta, 1);
   t.lastBeep = null;
+  if (t.running) scheduleTimerSounds();
   persist();
   paintLive();
 }
@@ -2072,7 +2116,7 @@ function renderSettings() {
     <section class="section">
       <div class="section-head"><h2>App</h2></div>
       <button class="row-link" data-act="update"><span><b>Actualizar app</b><small>Descarga la última versión sin borrar el acceso directo ni tu historial</small></span>${icon("refresh")}</button>
-      <p class="muted small">Versión ${DEV_BUILD ? "de desarrollo" : esc(APP_VERSION.slice(0, 7))}${latestVersion && latestVersion !== APP_VERSION ? " · hay una versión nueva" : ""}</p>
+      <p class="muted small">Pantalla ${screen.height}/${window.innerHeight}${STANDALONE ? " · app" : " · navegador"} · Versión ${DEV_BUILD ? "de desarrollo" : esc(APP_VERSION.slice(0, 7))}${latestVersion && latestVersion !== APP_VERSION ? " · hay una versión nueva" : ""}</p>
     </section>
     <section class="section">
       <div class="section-head"><h2>Pauta</h2></div>
@@ -2183,6 +2227,7 @@ function workoutPrimary() {
 }
 
 let npKey = "";
+const NP_ART = [{ src: new URL("icons/entreno-512-v3.png", location.href).href, sizes: "512x512", type: "image/png" }];
 let npAt = 0;
 function updateNowPlaying(force = false) {
   if (!("mediaSession" in navigator)) return;
@@ -2201,11 +2246,11 @@ function updateNowPlaying(force = false) {
   const setTxt = st.group && st.rounds > 1 ? `Ronda ${st.round + 1}/${st.rounds}` : `Serie ${st.set + 1}/${st.nSets}`;
   let title, artist;
   if (session.phase === "rest") {
-    title = `${STATE_LABEL[state]} · ${fmt(timerLeft())}`;
-    artist = `Sigue: ${ex.name} · ${setTxt}`;
+    title = `${STATE_LABEL[state]} · ${ex.name}`;
+    artist = `Sigue: ${setTxt}`;
   } else {
     let prog;
-    if (ex.time) prog = session.timer ? fmt(timerLeft()) : `${ex.time} s`;
+    if (ex.time) prog = `${ex.time} s`;
     else if (session.metro?.switchUntil) prog = "Cambia de lado";
     else prog = `${session.reps}/${ex.reps || "–"}`;
     title = `${prog} · ${ex.name}`;
@@ -2220,7 +2265,7 @@ function updateNowPlaying(force = false) {
         title,
         artist,
         album: `Entreno · ${day.name}`,
-        artwork: [{ src: new URL("icons/entreno-512-v3.png", location.href).href, sizes: "512x512", type: "image/png" }],
+        artwork: NP_ART,
       });
     } catch {}
   }
