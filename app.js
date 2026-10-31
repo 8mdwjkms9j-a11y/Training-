@@ -461,6 +461,7 @@ function renderNow(state, changed) {
   (views[route.view] || renderHome)();
   renderTabbar();
   if (changed) $app.querySelector(".phase")?.classList.add("morph");
+  updateNowPlaying(true);
 }
 
 function bindActs(map) {
@@ -882,6 +883,10 @@ function tick() {
     }
   }
   if (route.view === "workout") paintLive();
+  if (Date.now() - npAt > 900) {
+    npAt = Date.now();
+    updateNowPlaying();
+  }
 }
 
 function onTimerDone() {
@@ -1987,6 +1992,7 @@ function renderSettings() {
       <p class="muted small">Cuenta regresiva para acomodarte antes de cada ejercicio nuevo. Si el descanso de la pauta es más largo, se usa ese.</p>
       <button class="btn ghost full mt" data-act="test">Probar sonido</button>
       <p class="muted small">Los pitidos suenan aunque el iPhone esté en silencio; súbele el volumen con los botones laterales.</p>
+      <p class="muted small">Durante el entrenamiento verás el ejercicio, las repeticiones o el tiempo y lo que sigue en <b>Ahora suena</b>: pantalla bloqueada, Dynamic Island y Apple Watch. Desde ahí puedes <b>pausar</b> (⏯) o pasar a lo <b>siguiente</b> (⏭).</p>
     </section>
     <section class="section">
       <div class="section-head"><h2>App</h2></div>
@@ -2027,24 +2033,158 @@ function renderSettings() {
 // ---------- ocultar barras al hacer scroll ----------
 // Bajando: se esconden el menú inferior y la barra superior. Subiendo o cerca del borde: vuelven.
 (() => {
-  let lastY = window.scrollY;
+  // Con histéresis: solo cambia tras recorrer ~28px en la misma dirección,
+  // e ignora el "rebote" de iOS arriba y abajo (evita que el menú tiemble).
+  let lastY = Math.max(0, window.scrollY);
+  let acc = 0;
   let ticking = false;
   const update = () => {
     ticking = false;
-    const y = Math.max(0, window.scrollY);
-    const nearBottom = window.innerHeight + y >= document.documentElement.scrollHeight - 8;
+    const max = document.documentElement.scrollHeight - window.innerHeight;
+    const raw = window.scrollY;
+    if (raw < 0 || raw > max + 1) return; // rebote elástico
+    const y = raw;
     const dy = y - lastY;
-    if (y < 40 || nearBottom) document.body.classList.remove("nav-compact");
-    else if (dy > 6) document.body.classList.add("nav-compact");
-    else if (dy < -6) document.body.classList.remove("nav-compact");
-    if (Math.abs(dy) > 6 || y < 40) lastY = y;
-  };
-  window.addEventListener("scroll", () => {
-    if (!ticking) {
-      ticking = true;
-      requestAnimationFrame(update);
+    lastY = y;
+    if (y < 24) {
+      acc = 0;
+      document.body.classList.remove("nav-compact");
+      return;
     }
-  }, { passive: true });
+    if (Math.sign(dy) !== Math.sign(acc)) acc = 0;
+    acc += dy;
+    if (acc > 28) document.body.classList.add("nav-compact");
+    else if (acc < -28) document.body.classList.remove("nav-compact");
+  };
+  window.addEventListener(
+    "scroll",
+    () => {
+      if (!ticking) {
+        ticking = true;
+        requestAnimationFrame(update);
+      }
+    },
+    { passive: true }
+  );
+})();
+
+
+// ============================================================
+//  "AHORA SUENA": pantalla bloqueada, Dynamic Island y Apple Watch
+//  (las Live Activities nativas no están disponibles para apps web;
+//   usamos el panel de reproducción, que sí lo está mientras suena el audio)
+// ============================================================
+function isWorkoutPaused() {
+  if (!session) return false;
+  return (session.metro && !session.metro.running) || (session.timer && !session.timer.running) || false;
+}
+function workoutTogglePause() {
+  if (!session) return;
+  if (session.metro) session.metro.running ? metroPause() : metroResume();
+  else if (session.timer) session.timer.running ? timerPause() : timerResume();
+  else return;
+  if (route.view === "workout") render();
+}
+// Acción principal: la misma que el botón grande de la pantalla
+function workoutPrimary() {
+  if (!session) return;
+  const ex = curEx();
+  if (session.phase === "rest") return beginWork(true);
+  if (ex.time) {
+    if (session.timer) return logSet({ time: Math.round(session.timer.total - timerLeft()) });
+    timerStart(+ex.time);
+    return route.view === "workout" && render();
+  }
+  if (hasMetro(ex) && !session.metro) {
+    metroStart();
+    return route.view === "workout" && render();
+  }
+  session.metro = null;
+  const entry = { reps: Math.min(session.reps || +ex.reps || 0, +ex.reps || Infinity), time: Math.round((Date.now() - session.setStartedAt) / 1000) };
+  const kgIn = document.getElementById("kgInput");
+  const kg = kgIn && kgIn.value !== "" ? +kgIn.value : lastKg[ex.name];
+  if (ex.rpe && kg) entry.kg = +kg;
+  logSet(entry);
+}
+
+let npKey = "";
+let npAt = 0;
+function updateNowPlaying(force = false) {
+  if (!("mediaSession" in navigator)) return;
+  const ms = navigator.mediaSession;
+  if (!session) {
+    if (npKey) {
+      try {
+        ms.metadata = null;
+        ms.playbackState = "none";
+      } catch {}
+      npKey = "";
+    }
+    return;
+  }
+  const day = curDay(), st = curStep(), ex = curEx(), state = currentState();
+  const setTxt = st.group && st.rounds > 1 ? `Ronda ${st.round + 1}/${st.rounds}` : `Serie ${st.set + 1}/${st.nSets}`;
+  let title, artist;
+  if (session.phase === "rest") {
+    title = `${STATE_LABEL[state]} · ${fmt(timerLeft())}`;
+    artist = `Sigue: ${ex.name} · ${setTxt}`;
+  } else {
+    let prog;
+    if (ex.time) prog = session.timer ? fmt(timerLeft()) : `${ex.time} s`;
+    else if (session.metro?.switchUntil) prog = "Cambia de lado";
+    else prog = `${session.reps}/${ex.reps || "–"}`;
+    title = `${prog} · ${ex.name}`;
+    const nxt = session.steps.slice(session.i + 1).find((x) => x.ex !== st.ex);
+    artist = `${setTxt}${nxt ? ` · Sigue: ${day.exercises[nxt.ex].name}` : " · Último ejercicio"}`;
+  }
+  const key = title + "|" + artist;
+  if (force || key !== npKey) {
+    npKey = key;
+    try {
+      ms.metadata = new MediaMetadata({
+        title,
+        artist,
+        album: `Entreno · ${day.name}`,
+        artwork: [{ src: new URL("icons/entreno-512-v3.png", location.href).href, sizes: "512x512", type: "image/png" }],
+      });
+    } catch {}
+  }
+  try {
+    ms.playbackState = isWorkoutPaused() ? "paused" : "playing";
+    const t = session.timer;
+    if (t && ms.setPositionState) {
+      ms.setPositionState({ duration: Math.max(1, t.total), position: Math.min(t.total, Math.max(0, t.total - timerLeft())), playbackRate: 1 });
+    }
+  } catch {}
+}
+
+(function setupMediaSession() {
+  if (!("mediaSession" in navigator)) return;
+  const h = (a, f) => {
+    try {
+      navigator.mediaSession.setActionHandler(a, f);
+    } catch {}
+  };
+  const after = () => {
+    ensurePlayback();
+    updateNowPlaying(true);
+  };
+  h("play", () => {
+    if (isWorkoutPaused()) workoutTogglePause();
+    after();
+  });
+  h("pause", () => {
+    if (!isWorkoutPaused()) workoutTogglePause();
+    after();
+  });
+  h("nexttrack", () => {
+    workoutPrimary();
+    after();
+  });
+  h("previoustrack", () => {
+    if (session) jumpStep(-1);
+    after();
+  });
 })();
 
 // ---------- actualizar la app ----------
