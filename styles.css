@@ -34,6 +34,8 @@
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
+html { height: 100%; }
+body { min-height: 100%; }
 html, body {
   margin: 0;
   overscroll-behavior-y: none;
@@ -206,7 +208,7 @@ body.is-home main { padding-top: calc(18px + var(--safe-top)); }
    solo se anima la escala desde el borde inferior. */
 .tabbar {
   position: fixed; z-index: 20; left: 0; right: 0; margin: 0 auto;
-  bottom: max(12px, calc(var(--safe-bottom) + 4px));
+  bottom: calc(max(12px, var(--safe-bottom) + 4px) - var(--vp-gap, 0px));
   width: min(400px, calc(100% - 32px));
   display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; padding: 6px;
   border-radius: 999px;
@@ -404,7 +406,7 @@ code { background: var(--surface-2); padding: 1px 5px; border-radius: 5px; font-
 .modal-box { background: rgba(30, 32, 40, 0.8); border: 1px solid var(--line); border-radius: 20px; padding: 18px; width: 100%; max-width: 360px; }
 .modal-box p { margin: 0 0 16px; font-size: 17px; font-weight: 600; }
 .toast {
-  position: fixed; left: 50%; bottom: calc(80px + var(--safe-bottom)); transform: translateX(-50%); z-index: 60;
+  position: fixed; left: 50%; bottom: calc(96px + var(--safe-bottom) - var(--vp-gap, 0px)); transform: translateX(-50%); z-index: 60;
   background: var(--surface-2); border: 1px solid var(--line); padding: 10px 16px; border-radius: 999px; font-size: 14px;
 }
 
@@ -653,3 +655,84 @@ body::before {
 .workout-foot .text-btn.danger { color: #e98b8b; }
 
 .progress { height: 4px; }
+
+/* ---------- corrección de viewport (iOS) ---------- */
+.sticky-bottom { bottom: calc(0px - var(--vp-gap, 0px)); }
+
+/* ---------- panel inferior (bottom sheet) ---------- */
+.sheet-wrap { position: fixed; inset: 0 0 calc(0px - var(--vp-gap, 0px)) 0; z-index: 70; }
+.sheet-backdrop {
+  position: absolute; inset: 0; background: rgba(5, 6, 9, 0.5);
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  opacity: 0; transition: opacity .35s ease;
+}
+.sheet {
+  position: absolute; left: 0; right: 0; bottom: 0; margin: 0 auto; max-width: 640px;
+  max-height: 88%; display: flex; flex-direction: column;
+  padding: 8px 18px calc(18px + var(--safe-bottom));
+  border-radius: 28px 28px 0 0;
+  background: linear-gradient(180deg, rgba(40, 42, 52, 0.82), rgba(20, 21, 27, 0.92));
+  backdrop-filter: blur(30px) saturate(170%); -webkit-backdrop-filter: blur(30px) saturate(170%);
+  border: 1px solid rgba(255, 255, 255, 0.12); border-bottom: 0;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 -20px 50px -20px rgba(0,0,0,.7);
+  transform: translateY(105%);
+  transition: transform .42s cubic-bezier(.2, .9, .25, 1);
+}
+.sheet::before {
+  content: ""; position: absolute; left: 24px; right: 24px; top: 0; height: 2px; border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--sa), var(--sb), transparent); opacity: .7;
+}
+.sheet-wrap.open .sheet { transform: translateY(0); }
+.sheet-wrap.open .sheet-backdrop { opacity: 1; }
+.sheet-grab { width: 40px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.28); margin: 2px auto 10px; flex: none; }
+.sheet-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex: none; }
+.sheet-head h3 { margin: 0; font: 700 26px/1.05 var(--font-display); text-transform: uppercase; }
+.sheet-head small { display: block; margin-top: 4px; color: var(--muted); font-size: 13px; font-weight: 600; }
+.sheet-x {
+  flex: none; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
+  background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.1); color: var(--text);
+}
+.sheet-x .ico { width: 18px; height: 18px; }
+.sheet-body { overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding-top: 14px; display: flex; flex-direction: column; gap: 14px; }
+.sheet-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.sheet-chip { font-size: 13px; font-weight: 600; padding: 5px 10px; border-radius: 999px; background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.08); }
+.sheet-notes { margin: 0; font-size: 16px; line-height: 1.5; color: #e6e2da; padding-left: 12px; border-left: 2px solid color-mix(in srgb, var(--sa) 70%, transparent); }
+.sheet-video .video { border-radius: 16px; }
+body.sheet-open { overflow: hidden; }
+body.sheet-open .tabbar { opacity: 0; pointer-events: none; }
+
+/* chip de técnica en la pantalla de ejercicio */
+.tech-chip {
+  display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  padding: 4px 11px 4px 9px; border-radius: 999px; font-size: 13px; font-weight: 700;
+  color: var(--text); background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12);
+}
+.tech-chip .ico { width: 12px; height: 12px; }
+.tech-chip.hint { border-color: color-mix(in srgb, var(--sa) 60%, transparent); box-shadow: 0 0 0 0 color-mix(in srgb, var(--sa) 45%, transparent); animation: hint 2s ease-out infinite; }
+@keyframes hint { 70% { box-shadow: 0 0 0 8px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+
+/* filas de ejercicios del día */
+.ex-row {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; cursor: pointer;
+  background: none; border: 0; padding: 10px 4px; border-bottom: 1px solid var(--line);
+}
+.ex-row.card { padding: 14px 14px 14px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); }
+.group-card .ex-row:last-child { border-bottom: 0; }
+.ex-row > .ico { color: var(--muted); width: 18px; height: 18px; }
+.ex-row:active { opacity: .7; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet, .sheet-backdrop { transition: none; }
+  .tech-chip.hint { animation: none; }
+}
+
+/* pantallas bajas: compacta el contador para evitar scroll */
+@media (max-height: 760px) {
+  .context { margin-top: 8px; }
+  .ex-name { font-size: 26px; }
+  .phase { gap: 8px; padding: 12px 12px 10px; }
+  .phase .ring, .phase .rep-counter { width: 168px; height: 168px; }
+  .phase .ring-num { width: 144px; height: 144px; font-size: 50px; }
+  .phase .rep-counter span { font-size: 70px; }
+  .phase .btn.big { min-height: 52px; }
+}

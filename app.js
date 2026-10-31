@@ -19,6 +19,88 @@ const LS = {
 const STANDALONE = window.navigator.standalone === true || window.matchMedia("(display-mode: standalone)").matches;
 document.documentElement.classList.toggle("standalone", STANDALONE);
 
+// iOS (app en pantalla de inicio + barra de estado translúcida) a veces calcula la
+// pantalla más corta de lo real y lo "fijo abajo" queda flotando. Medimos la diferencia.
+function fixViewport() {
+  const gap = STANDALONE ? Math.round(screen.height - window.innerHeight) : 0;
+  const portrait = window.matchMedia("(orientation: portrait)").matches;
+  const ok = portrait && gap > 0 && gap < 200; // >200 suele ser el teclado: no corregir
+  document.documentElement.style.setProperty("--vp-gap", (ok ? gap : 0) + "px");
+}
+fixViewport();
+window.addEventListener("resize", fixViewport);
+window.addEventListener("orientationchange", () => setTimeout(fixViewport, 300));
+
+// ---------- panel inferior (bottom sheet) ----------
+let closeSheet = null;
+function openSheet({ title, subtitle = "", body, onClose }) {
+  closeSheet?.(true);
+  const wrap = document.createElement("div");
+  wrap.className = "sheet-wrap";
+  wrap.innerHTML = `
+    <div class="sheet-backdrop" data-close></div>
+    <section class="sheet" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+      <div class="sheet-grab" aria-hidden="true"></div>
+      <header class="sheet-head">
+        <div><h3>${esc(title)}</h3>${subtitle ? `<small>${subtitle}</small>` : ""}</div>
+        <button class="sheet-x" data-close aria-label="Cerrar">${icon("close")}</button>
+      </header>
+      <div class="sheet-body">${body}</div>
+    </section>`;
+  document.body.appendChild(wrap);
+  document.body.classList.add("sheet-open");
+  const sheet = wrap.querySelector(".sheet");
+  const sbody = wrap.querySelector(".sheet-body");
+  requestAnimationFrame(() => requestAnimationFrame(() => wrap.classList.add("open")));
+
+  const close = (instant = false) => {
+    if (!wrap.isConnected) return;
+    closeSheet = null;
+    document.body.classList.remove("sheet-open");
+    onClose?.();
+    if (instant) return wrap.remove();
+    wrap.classList.remove("open");
+    sheet.style.transform = "";
+    setTimeout(() => wrap.remove(), 380);
+  };
+  closeSheet = close;
+  wrap.querySelectorAll("[data-close]").forEach((el) => el.addEventListener("click", () => close()));
+
+  // arrastrar hacia abajo para cerrar
+  let y0 = null, dy = 0;
+  sheet.addEventListener("touchstart", (e) => {
+    if (sbody.scrollTop > 0 && !e.target.closest(".sheet-head, .sheet-grab")) return;
+    y0 = e.touches[0].clientY;
+    dy = 0;
+    sheet.style.transition = "none";
+  }, { passive: true });
+  sheet.addEventListener("touchmove", (e) => {
+    if (y0 === null) return;
+    dy = Math.max(0, e.touches[0].clientY - y0);
+    sheet.style.transform = `translateY(${dy}px)`;
+  }, { passive: true });
+  sheet.addEventListener("touchend", () => {
+    if (y0 === null) return;
+    y0 = null;
+    sheet.style.transition = "";
+    if (dy > 110) close();
+    else sheet.style.transform = "";
+  });
+  return close;
+}
+
+function techSheet(ex, wk) {
+  const chips = [exTarget(ex, wk)].filter(Boolean).map((t) => `<span class="sheet-chip">${esc(t)}</span>`).join("");
+  openSheet({
+    title: ex.name,
+    subtitle: [...new Set([ex.block, ex.group && ex.group.length > 1 ? ex.group : ex.group ? "Superserie " + ex.group : ""].filter(Boolean))].map(esc).join(" · "),
+    body: `
+      <div class="sheet-chips">${chips}</div>
+      ${ex.notes ? `<p class="sheet-notes">${esc(ex.notes)}</p>` : ""}
+      <div class="sheet-video">${videoHtml(ex)}</div>`,
+  });
+}
+
 const $app = document.getElementById("app");
 const $title = document.getElementById("title");
 const $back = document.getElementById("backBtn");
@@ -380,6 +462,7 @@ let route = { view: "home" };
 let ticker = null;
 
 function go(view, params = {}) {
+  closeSheet?.(true);
   route = { view, ...params };
   document.body.classList.remove("nav-compact");
   render();
@@ -505,6 +588,8 @@ const ICON = {
   list: '<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   chevron: '<path d="m9 6 6 6-6 6"/>',
+  close: '<path d="M6 6l12 12M18 6 6 18"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/>',
   refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>',
   pause: '<path d="M8 5v14M16 5v14"/>',
   reset: '<path d="M4 12a8 8 0 1 0 2.3-5.7"/><path d="M4 4v5h5"/>',
@@ -734,17 +819,14 @@ function renderDay() {
         const i = g.start + k;
         const tag = g.name ? (g.name.length === 1 ? `${g.name}${k + 1}` : k + 1) : i + 1;
         return `
-        <details class="ex-card ${g.name ? "in-group" : "card"}">
-          <summary>
-            <span class="num">${esc(tag)}</span>
-            <span class="grow">
-              <span class="card-title">${esc(ex.name)}</span>
-              <span class="muted block small">${esc(exTarget(ex, wk))}</span>
-            </span>
-          </summary>
-          <div class="ex-body" data-video="${i}"></div>
-          ${ex.notes ? `<p class="notes">${esc(ex.notes)}</p>` : ""}
-        </details>`;
+        <button class="ex-row ${g.name ? "in-group" : "card"}" data-ex="${i}" aria-label="${esc(ex.name)}: ver técnica">
+          <span class="num">${esc(tag)}</span>
+          <span class="grow">
+            <span class="card-title">${esc(ex.name)}</span>
+            <span class="muted block small">${esc(exTarget(ex, wk))}</span>
+          </span>
+          ${icon("chevron")}
+        </button>`;
       })
       .join("");
     if (label) {
@@ -769,13 +851,9 @@ function renderDay() {
       }
     </div>`;
 
-  // Carga el video solo al abrir el ejercicio (más liviano)
-  $app.querySelectorAll("details.ex-card").forEach((d) => {
-    d.addEventListener("toggle", () => {
-      const box = d.querySelector("[data-video]");
-      if (d.open && !box.innerHTML) box.innerHTML = videoHtml(day.exercises[+box.dataset.video]);
-    });
-  });
+  $app.querySelectorAll("[data-ex]").forEach((b) =>
+    b.addEventListener("click", () => techSheet(day.exercises[+b.dataset.ex], wk))
+  );
 
   bindActs({
     resume: () => go("workout"),
@@ -1200,8 +1278,6 @@ function renderWorkout() {
   }
 
   const setDotsHtml = st.nSets > 1 ? `<span class="dots">${setDots}</span>` : "";
-  const techOpen = state === "prep";
-  const hasTech = ex.notes || ex.video !== undefined || true;
 
   $app.innerHTML = `
     <div class="progress" aria-hidden="true"><div style="width:${(session.i / total) * 100}%"></div></div>
@@ -1210,6 +1286,7 @@ function renderWorkout() {
     <div class="ex-meta">
       ${target ? `<span>${esc(target)}</span>` : ""}
       ${ex.rpe ? `<button class="rpe-chip" data-act="rpe" aria-label="Ver tabla RPE">RPE ${esc(ex.rpe)}</button>` : ""}
+      <button class="tech-chip ${state === "prep" ? "hint" : ""}" data-act="tech" aria-label="Ver técnica: notas y video">${icon("play")} Técnica</button>
     </div>
 
     <section class="phase">
@@ -1228,16 +1305,6 @@ function renderWorkout() {
       }
     </section>
 
-    ${
-      hasTech
-        ? `<details class="video-box tech" ${techOpen ? "open" : ""}>
-             <summary><span>Técnica</span><small>${ex.notes ? "notas y video" : "video"}</small></summary>
-             ${ex.notes ? `<p class="notes">${esc(ex.notes)}</p>` : ""}
-             <div class="video-slot"></div>
-           </details>`
-        : ""
-    }
-
     <nav class="workout-foot" aria-label="Navegación del entrenamiento">
       <button class="text-btn" data-act="prevEx" ${session.i === 0 ? "disabled" : ""}>‹ Anterior</button>
       <button class="text-btn" data-act="nextEx" ${session.i >= total - 1 ? "disabled" : ""}>Saltar ejercicio ›</button>
@@ -1245,14 +1312,11 @@ function renderWorkout() {
     </nav>
   `;
 
-  window.scrollTo(0, 0);
-  const vb = $app.querySelector(".video-box");
-  const loadVideo = () => {
-    const slot = vb.querySelector(".video-slot");
-    if (vb.open && !slot.innerHTML) slot.innerHTML = videoHtml(ex);
-  };
-  vb.addEventListener("toggle", loadVideo);
-  loadVideo();
+  // solo vuelve arriba al cambiar de ejercicio (evita saltos en cada redibujo)
+  if (renderWorkout.lastEx !== `${session.dayIndex}:${st.ex}`) {
+    renderWorkout.lastEx = `${session.dayIndex}:${st.ex}`;
+    window.scrollTo(0, 0);
+  }
 
   bindActs({
     repPlus: () => {
@@ -1336,6 +1400,7 @@ function renderWorkout() {
     prevEx: () => jumpStep(-1),
     nextEx: () => jumpStep(1),
     rpe: () => go("rpe", { from: "workout" }),
+    tech: () => techSheet(ex, weekSets()),
     finish: async () => {
       if (await ask("¿Terminar y guardar el entrenamiento?")) finishSession();
     },
