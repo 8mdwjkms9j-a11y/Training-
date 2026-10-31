@@ -245,19 +245,66 @@ function buildSteps(day, wk) {
 
 // ---------- sonido, voz, vibración, pantalla encendida ----------
 let audioCtx = null;
+let keepAlive = null;
+
+// WAV de silencio: al reproducirlo en un <audio>, iOS usa la sesión "playback"
+// y los pitidos suenan aunque el interruptor de silencio esté activado.
+function silentWavUrl() {
+  const rate = 8000, n = rate / 2, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  const w = (o, str) => [...str].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  w(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); w(8, "WAVEfmt ");
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  w(36, "data"); v.setUint32(40, n * 2, true);
+  return URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+}
+
+function ensurePlayback() {
+  try {
+    if (navigator.audioSession) navigator.audioSession.type = "playback";
+  } catch {}
+  try {
+    if (!keepAlive) {
+      keepAlive = new Audio(silentWavUrl());
+      keepAlive.loop = true;
+      keepAlive.setAttribute("playsinline", "");
+      keepAlive.setAttribute("x-webkit-airplay", "deny");
+    }
+    keepAlive.play().catch(() => {});
+  } catch {}
+}
+function stopPlayback() {
+  try {
+    keepAlive?.pause();
+  } catch {}
+}
+
 function unlockAudio() {
   try {
+    if (session) ensurePlayback();
+    else if (navigator.audioSession) navigator.audioSession.type = "playback";
+  } catch {}
+  try {
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === "suspended") audioCtx.resume();
+    if (audioCtx.state !== "running") audioCtx.resume();
   } catch {}
 }
 document.addEventListener("touchend", unlockAudio, { passive: true });
 document.addEventListener("click", unlockAudio);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && audioCtx && audioCtx.state !== "running") audioCtx.resume().catch(() => {});
+});
+
+function ctxReady() {
+  if (!prefs.sound || !audioCtx) return false;
+  if (audioCtx.state !== "running") audioCtx.resume().catch(() => {});
+  return true;
+}
 
 function beep(freq = 880, dur = 0.15, times = 1, vol = 0.5) {
-  if (!prefs.sound || !audioCtx) return;
+  if (!ctxReady()) return;
   for (let i = 0; i < times; i++) {
-    const t = audioCtx.currentTime + i * (dur + 0.08);
+    const t = audioCtx.currentTime + 0.01 + i * (dur + 0.08);
     const o = audioCtx.createOscillator();
     const g = audioCtx.createGain();
     o.frequency.value = freq;
@@ -269,6 +316,28 @@ function beep(freq = 880, dur = 0.15, times = 1, vol = 0.5) {
     o.start(t);
     o.stop(t + dur + 0.02);
   }
+}
+
+// Golpe tipo "bloque de madera": suave pero se escucha bien en el parlante del teléfono
+function click(accent = true, vol = 0.7) {
+  if (!ctxReady()) return;
+  const t = audioCtx.currentTime + 0.01;
+  const out = audioCtx.createGain();
+  out.gain.value = vol;
+  out.connect(audioCtx.destination);
+  [[accent ? 1800 : 1400, "triangle", 0.05], [accent ? 900 : 700, "sine", 0.09]].forEach(([f, type, d]) => {
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(f, t);
+    o.frequency.exponentialRampToValueAtTime(f * 0.7, t + d);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(1, t + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    o.connect(g).connect(out);
+    o.start(t);
+    o.stop(t + d + 0.02);
+  });
 }
 
 function say(text) {
@@ -533,7 +602,10 @@ function renderHome() {
   bindActs({
     start: () => startSession(di),
     preview: () => go("day", { dayIndex: di }),
-    resume: () => go("workout"),
+    resume: () => {
+      ensurePlayback();
+      go("workout");
+    },
     weekAuto: () => {
       prefs.week = "auto";
       save(LS.prefs, prefs);
@@ -544,6 +616,7 @@ function renderHome() {
         session = null;
         save(LS.session, null);
         keepAwake(false);
+        stopPlayback();
         render();
       }
     },
@@ -671,6 +744,7 @@ function renderDay() {
 */
 function startSession(dayIndex) {
   unlockAudio();
+  ensurePlayback();
   const day = plan.days[dayIndex];
   const steps = buildSteps(day, weekSets());
   if (!steps.length) return toast("Este día no tiene ejercicios.");
@@ -862,14 +936,14 @@ function metroTick() {
     m.lastBeat = beat;
     session.reps = ex.alternate ? Math.floor(beat / 2) + 1 : beat + 1;
     const accent = ex.alternate ? beat % 2 === 0 : true;
-    beep(accent ? 880 : 740, 0.07, 1, 0.28);
+    click(accent, 0.75);
     persist();
   }
   if (prefs.metroTick) {
     const half = Math.floor((el - tempo / 2) / tempo);
     if (half >= 0 && half < total && half !== m.lastHalf) {
       m.lastHalf = half;
-      beep(520, 0.04, 1, 0.1);
+      click(false, 0.18);
     }
   }
 }
@@ -964,6 +1038,7 @@ function finishSession() {
   session = null;
   save(LS.session, null);
   keepAwake(false);
+  setTimeout(stopPlayback, 4000);
   beep(1200, 0.2, 3);
   say("¡Entrenamiento terminado! Buen trabajo.");
   go("summary", { entry: history.length - 1 });
@@ -1149,6 +1224,7 @@ function renderWorkout() {
     },
     metroStart: () => {
       unlockAudio();
+      ensurePlayback();
       metroStart();
       render();
     },
@@ -1437,7 +1513,7 @@ function renderSettings() {
       </div>
       <p class="muted small">Cuenta regresiva para acomodarte antes de cada ejercicio nuevo. Si el descanso de la pauta es más largo, se usa ese.</p>
       <button class="btn ghost full mt" data-act="test">Probar sonido</button>
-      <p class="muted small">En iPhone, si no escuchas los pitidos, revisa que el interruptor de silencio esté desactivado.</p>
+      <p class="muted small">Los pitidos suenan aunque el iPhone esté en silencio; súbele el volumen con los botones laterales.</p>
     </section>
     <section class="section">
       <div class="section-head"><h2>Pauta</h2></div>
@@ -1460,7 +1536,10 @@ function renderSettings() {
     edit: () => go("edit"),
     test: () => {
       unlockAudio();
+      ensurePlayback();
+      if (!session) setTimeout(stopPlayback, 5000);
       beep(880, 0.15, 2);
+      setTimeout(() => [0, 1, 2, 3].forEach((k) => setTimeout(() => click(k === 0, 0.75), k * 500)), 600);
       say("Sonido de prueba");
     },
   });
