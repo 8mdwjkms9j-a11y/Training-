@@ -40,7 +40,11 @@ if (!plan || (plan.version || 0) < (window.DEFAULT_PLAN.version || 0)) {
 let history = load(LS.history, []);
 let session = load(LS.session, null);
 let lastKg = load(LS.kg, {});
-let prefs = Object.assign({ sound: true, voice: true, autoRest: true, week: "auto" }, load(LS.prefs, {}));
+let prefs = Object.assign(
+  { sound: true, voice: true, autoRest: true, week: "auto", prep: 10, autoStart: true, metroTick: true },
+  load(LS.prefs, {})
+);
+let lastTempo = load("entreno.tempo", {});
 
 // ---------- utilidades ----------
 const esc = (s) =>
@@ -247,7 +251,7 @@ function unlockAudio() {
 document.addEventListener("touchend", unlockAudio, { passive: true });
 document.addEventListener("click", unlockAudio);
 
-function beep(freq = 880, dur = 0.15, times = 1) {
+function beep(freq = 880, dur = 0.15, times = 1, vol = 0.5) {
   if (!prefs.sound || !audioCtx) return;
   for (let i = 0; i < times; i++) {
     const t = audioCtx.currentTime + i * (dur + 0.08);
@@ -256,7 +260,7 @@ function beep(freq = 880, dur = 0.15, times = 1) {
     o.frequency.value = freq;
     o.type = "sine";
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.5, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(vol, t + 0.01);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     o.connect(g).connect(audioCtx.destination);
     o.start(t);
@@ -322,7 +326,7 @@ function render() {
   clearInterval(ticker);
   ticker = null;
   updateClock();
-  if (session) ticker = setInterval(tick, 250);
+  if (session) ticker = setInterval(tick, 100);
 
   const views = {
     home: renderHome,
@@ -662,12 +666,21 @@ function startSession(dayIndex) {
     phase: "work",
     reps: 0,
     timer: null,
+    metro: null,
     setStartedAt: Date.now(),
     log: {},
   };
+  const first = day.exercises[steps[0].ex];
+  if (prefs.prep > 0) {
+    session.phase = "rest";
+    session.restKind = "prep";
+    timerStart(+prefs.prep);
+    say(`Empezamos. Prepárate: ${first.name}`);
+  } else {
+    say(`Empezamos. ${first.name}`);
+  }
   persist();
   keepAwake(true);
-  say(`Empezamos. ${day.exercises[steps[0].ex].name}`);
   go("workout");
 }
 
@@ -706,6 +719,8 @@ function timerLeft() {
 function tick() {
   updateClock();
   if (!session) return;
+  if (session.metro && session.phase === "work") metroTick();
+  if (!session) return;
   const t = session.timer;
   if (t && t.running) {
     const left = timerLeft();
@@ -732,8 +747,113 @@ function onTimerDone() {
   } else {
     beep(990, 0.3, 2);
     buzz([300, 100, 300]);
-    say(curStep().side === 2 ? "Otro lado" : "¡Vamos!");
-    beginWork();
+    if (!(prefs.autoStart && (curEx().time || hasMetro(curEx())))) say(curStep().side === 2 ? "Otro lado" : "¡Vamos!");
+    beginWork(true);
+  }
+}
+
+// ---------- metrónomo (repeticiones guiadas por pitido) ----------
+const hasMetro = (ex) => !ex.time && +ex.reps > 0 && +ex.tempo > 0;
+const tempoOf = (ex) => +(lastTempo[ex.name] ?? ex.tempo) || 3;
+const metroBeats = (ex) => +ex.reps * (ex.alternate ? 2 : 1);
+const metroSides = (ex) => (ex.perSide && !ex.alternate ? 2 : 1);
+
+function metroStart() {
+  session.metro = { running: true, t0: Date.now() + 500, elapsed: 0, side: 1, switchUntil: null, switchLeft: 0, lastBeat: -1, lastHalf: -1, lastCount: null };
+  session.reps = 0;
+  session.setStartedAt = Date.now();
+  say("Sigue el pitido");
+  persist();
+}
+function metroPause() {
+  const m = session.metro;
+  if (!m || !m.running) return;
+  if (m.switchUntil) m.switchLeft = Math.max(0, m.switchUntil - Date.now());
+  else m.elapsed = Date.now() - m.t0;
+  m.running = false;
+  persist();
+}
+function metroResume() {
+  const m = session.metro;
+  if (!m || m.running) return;
+  if (m.switchUntil) m.switchUntil = Date.now() + m.switchLeft;
+  else m.t0 = Date.now() - m.elapsed;
+  m.running = true;
+  persist();
+}
+function metroSetTempo(ex, delta) {
+  const old = tempoOf(ex);
+  const nw = Math.min(8, Math.max(1, Math.round((old + delta) * 2) / 2));
+  lastTempo[ex.name] = nw;
+  save("entreno.tempo", lastTempo);
+  const m = session.metro;
+  if (m && !m.switchUntil) {
+    const el = m.running ? Date.now() - m.t0 : m.elapsed;
+    const nel = (el / old) * nw;
+    if (m.running) m.t0 = Date.now() - nel;
+    else m.elapsed = nel;
+    persist();
+  }
+}
+function metroTick() {
+  const m = session.metro;
+  if (!m || !m.running) return;
+  const ex = curEx();
+  const now = Date.now();
+  if (m.switchUntil) {
+    const left = Math.ceil((m.switchUntil - now) / 1000);
+    if (left <= 3 && left > 0 && m.lastCount !== left) {
+      m.lastCount = left;
+      beep(660, 0.08, 1, 0.3);
+    }
+    if (now >= m.switchUntil) {
+      m.switchUntil = null;
+      m.side++;
+      m.t0 = now;
+      m.lastBeat = -1;
+      m.lastHalf = -1;
+      session.reps = 0;
+      persist();
+    }
+    paintLive();
+    return;
+  }
+  const tempo = tempoOf(ex) * 1000;
+  const el = now - m.t0;
+  if (el < 0) return;
+  const total = metroBeats(ex);
+  const beat = Math.floor(el / tempo);
+  if (beat >= total) {
+    if (m.side < metroSides(ex)) {
+      m.switchUntil = now + 5000;
+      m.lastCount = null;
+      session.reps = +ex.reps;
+      beep(990, 0.15, 2, 0.4);
+      say("Cambia de lado");
+      persist();
+      paintLive();
+      return;
+    }
+    session.reps = +ex.reps;
+    session.metro = null;
+    beep(1200, 0.15, 2, 0.45);
+    buzz([150, 80, 150]);
+    logSet({ reps: +ex.reps, time: Math.round((now - session.setStartedAt) / 1000) });
+    return;
+  }
+  if (beat !== m.lastBeat) {
+    m.lastBeat = beat;
+    session.reps = ex.alternate ? Math.floor(beat / 2) + 1 : beat + 1;
+    const accent = ex.alternate ? beat % 2 === 0 : true;
+    beep(accent ? 880 : 740, 0.07, 1, 0.28);
+    persist();
+  }
+  if (prefs.metroTick) {
+    const half = Math.floor((el - tempo / 2) / tempo);
+    if (half >= 0 && half < total && half !== m.lastHalf) {
+      m.lastHalf = half;
+      beep(520, 0.04, 1, 0.1);
+    }
   }
 }
 
@@ -746,32 +866,54 @@ function logSet(entry) {
     return finishSession();
   }
 
-  const rest = st.rest;
+  session.metro = null;
   session.i++;
   const next = curStep();
   const nextEx = curEx();
+  const changing = next.ex !== st.ex;
 
-  if (rest > 0 && prefs.autoRest) {
+  let rest = prefs.autoRest ? st.rest : 0;
+  let kind = next.side === 2 ? "side" : "rest";
+  if (next.side === 2 && !prefs.autoRest) rest = st.rest; // cambio de lado siempre
+  if (changing && +prefs.prep > rest) {
+    rest = +prefs.prep;
+    kind = "prep";
+  }
+  session.restKind = kind;
+
+  if (rest > 0) {
     session.phase = "rest";
     session.reps = 0;
     timerStart(rest);
-    if (next.side === 2) say("Cambia de lado");
-    else if (next.ex !== st.ex) say(`Descanso. Luego, ${nextEx.name}`);
+    if (kind === "side") say("Cambia de lado");
+    else if (kind === "prep") say(`Prepárate: ${nextEx.name}`);
+    else if (changing) say(`Descanso. Luego, ${nextEx.name}`);
     else say("Descanso");
+    persist();
+    render();
   } else {
-    if (next.ex !== st.ex) say(nextEx.name);
+    if (changing) say(nextEx.name);
     else if (next.side === 2) say("Otro lado");
-    beginWork();
+    beginWork(true);
   }
-  persist();
-  render();
 }
 
-function beginWork() {
+function beginWork(auto = false) {
   session.phase = "work";
   session.timer = null;
+  session.metro = null;
   session.reps = 0;
   session.setStartedAt = Date.now();
+  if (auto && prefs.autoStart) {
+    const ex = curEx();
+    if (ex.time) {
+      timerStart(+ex.time);
+      beep(990, 0.15);
+      say("Ya");
+    } else if (hasMetro(ex)) {
+      metroStart();
+    }
+  }
   persist();
   render();
 }
@@ -852,10 +994,11 @@ function renderWorkout() {
 
   let main;
   if (isRest) {
-    const sideSwitch = st.side === 2;
+    const kind = session.restKind || (st.side === 2 ? "side" : "rest");
+    const label = kind === "prep" ? "PREPÁRATE" : kind === "side" ? "CAMBIA DE LADO" : "DESCANSO";
     main = `
-      <div class="phase rest">
-        <div class="phase-label">${sideSwitch ? "CAMBIA DE LADO" : "DESCANSO"}</div>
+      <div class="phase rest ${kind === "prep" ? "prep" : ""}">
+        <div class="phase-label">${label}</div>
         <div class="ring" id="ring"><div class="ring-num" id="bigTime">${fmt(timerLeft())}</div></div>
         <div class="muted center">A continuación: <b>${esc(ex.name)}</b>${sideLabel(st)}<br>${setLabel.toLowerCase()}</div>
         <div class="row gap mt">
@@ -863,7 +1006,7 @@ function renderWorkout() {
           <button class="btn ghost grow" data-act="pause">${session.timer?.running ? "⏸ Pausa" : "▶ Seguir"}</button>
           <button class="btn ghost grow" data-act="plus15">+15 s</button>
         </div>
-        <button class="btn primary full big mt" data-act="skipRest">Saltar descanso ⏭</button>
+        <button class="btn primary full big mt" data-act="skipRest">${kind === "prep" ? "Estoy listo" : "Saltar descanso"}</button>
       </div>`;
   } else if (isTimed) {
     const t = session.timer;
@@ -881,6 +1024,33 @@ function renderWorkout() {
                  <button class="btn ghost grow" data-act="resetTimed">↺</button>
                </div>
                <button class="btn primary full big mt" data-act="doneTimed">✓ Listo</button>`
+        }
+      </div>`;
+  } else if (hasMetro(ex)) {
+    const target = +ex.reps;
+    const m = session.metro;
+    main = `
+      <div class="phase work">
+        <div class="phase-label">${setLabel} · ${target} REPS${ex.perSide ? " C/LADO" : ""}</div>
+        <button class="rep-counter ${m ? "metro-on" : ""}" id="repBtn" data-act="${m ? "metroToggle" : "repPlus"}" aria-label="${m ? "Pausar metrónomo" : "Sumar repetición"}">
+          <span id="repNum">${session.reps}</span>
+          <small>/ ${target}</small>
+          <em id="metroStatus">${m ? metroStatusText(ex) : "toca para contar"}</em>
+        </button>
+        <div class="tempo-row">
+          <button class="btn ghost" data-act="tempoMinus" aria-label="Más rápido">−</button>
+          <div class="tempo-val"><b>${tempoOf(ex).toFixed(1).replace(".0", "")} s</b><small>por repetición</small></div>
+          <button class="btn ghost" data-act="tempoPlus" aria-label="Más lento">+</button>
+        </div>
+        ${
+          !m
+            ? `<button class="btn primary full big mt" data-act="metroStart">${icon("play")} Iniciar metrónomo</button>
+               <button class="text-btn full-w" data-act="doneReps">Marcar serie lista</button>`
+            : `<div class="row gap mt">
+                 <button class="btn ghost grow" data-act="metroToggle" id="metroPauseBtn">${m.running ? "Pausa" : "Seguir"}</button>
+                 <button class="btn ghost grow" data-act="metroReset">Reiniciar</button>
+               </div>
+               <button class="btn primary full big mt" data-act="doneReps">Serie lista</button>`
         }
       </div>`;
   } else {
@@ -921,12 +1091,12 @@ function renderWorkout() {
       <span class="muted">${esc(exTarget(ex, weekSets()).replace(/ · RPE.*$/, ""))}</span>
       ${ex.rpe ? `<button class="rpe-chip" data-act="rpe">RPE ${esc(ex.rpe)} ⓘ</button>` : ""}
     </div>
+    ${main}
     ${ex.notes ? `<p class="notes">${esc(ex.notes)}</p>` : ""}
-    <details class="video-box" ${isRest ? "" : "open"}>
+    <details class="video-box" ${isRest || session.metro || session.timer ? "" : "open"}>
       <summary>Video</summary>
       <div class="video-slot"></div>
     </details>
-    ${main}
     <div class="row gap mt">
       <button class="btn ghost grow" data-act="prevEx" ${session.i === 0 ? "disabled" : ""}>‹ Anterior</button>
       <button class="btn ghost grow" data-act="nextEx" ${session.i >= total - 1 ? "disabled" : ""}>Saltar ›</button>
@@ -934,6 +1104,8 @@ function renderWorkout() {
     <button class="btn danger-ghost full mt" data-act="finish">Terminar entrenamiento</button>
   `;
 
+  $app.querySelector(".chip.on")?.scrollIntoView({ inline: "center", block: "nearest" });
+  window.scrollTo(0, 0);
   const vb = $app.querySelector(".video-box");
   const loadVideo = () => {
     const slot = vb.querySelector(".video-slot");
@@ -944,14 +1116,42 @@ function renderWorkout() {
 
   bindActs({
     repPlus: () => {
+      if (+ex.reps && session.reps >= +ex.reps) {
+        buzz(60);
+        beep(300, 0.08, 1, 0.2);
+        return toast(`Máximo ${ex.reps} repeticiones`);
+      }
       session.reps++;
       persist();
-      beep(1000, 0.04);
+      beep(1000, 0.04, 1, 0.3);
       if (+ex.reps && session.reps === +ex.reps) {
         buzz(150);
         beep(1300, 0.12, 2);
       }
       paintLive();
+    },
+    metroStart: () => {
+      unlockAudio();
+      metroStart();
+      render();
+    },
+    metroToggle: () => {
+      session.metro?.running ? metroPause() : metroResume();
+      render();
+    },
+    metroReset: () => {
+      session.metro = null;
+      session.reps = 0;
+      persist();
+      render();
+    },
+    tempoMinus: () => {
+      metroSetTempo(ex, -0.5);
+      render();
+    },
+    tempoPlus: () => {
+      metroSetTempo(ex, 0.5);
+      render();
     },
     repMinus: () => {
       session.reps = Math.max(0, session.reps - 1);
@@ -959,7 +1159,8 @@ function renderWorkout() {
       paintLive();
     },
     doneReps: () => {
-      const entry = { reps: session.reps || +ex.reps || 0, time: Math.round((Date.now() - session.setStartedAt) / 1000) };
+      session.metro = null;
+      const entry = { reps: Math.min(session.reps || +ex.reps || 0, +ex.reps || Infinity), time: Math.round((Date.now() - session.setStartedAt) / 1000) };
       const kgIn = document.getElementById("kgInput");
       if (kgIn && kgIn.value !== "") {
         entry.kg = +kgIn.value;
@@ -990,7 +1191,7 @@ function renderWorkout() {
     },
     minus15: () => adjustTimer(-15),
     plus15: () => adjustTimer(15),
-    skipRest: () => beginWork(),
+    skipRest: () => beginWork(true),
     prevEx: () => jumpStep(-1),
     nextEx: () => jumpStep(1),
     rpe: () => go("rpe", { from: "workout" }),
@@ -998,6 +1199,20 @@ function renderWorkout() {
       if (await ask("¿Terminar y guardar el entrenamiento?")) finishSession();
     },
   });
+}
+
+function metroStatusText(ex) {
+  const m = session.metro;
+  if (!m) return "";
+  if (m.switchUntil) {
+    const left = Math.max(0, Math.ceil(((m.running ? m.switchUntil - Date.now() : m.switchLeft)) / 1000));
+    return `cambia de lado · ${left}`;
+  }
+  if (!m.running) return "en pausa · toca para seguir";
+  const sides = metroSides(ex);
+  if (ex.alternate) return m.lastBeat % 2 === 0 ? "lado 1" : "lado 2";
+  if (Date.now() < m.t0) return "empieza con el pitido";
+  return sides > 1 ? `lado ${m.side} de ${sides}` : "sigue el pitido";
 }
 
 function adjustTimer(delta) {
@@ -1025,6 +1240,8 @@ function paintLive() {
   }
   const rn = document.getElementById("repNum");
   if (rn) rn.textContent = session.reps;
+  const ms = document.getElementById("metroStatus");
+  if (ms && session.metro) ms.textContent = metroStatusText(curEx());
   const sc = document.getElementById("setClock");
   if (sc) sc.textContent = "⏱ " + fmt((Date.now() - session.setStartedAt) / 1000);
 }
@@ -1190,7 +1407,18 @@ function renderSettings() {
         ${opt("sound", "Sonidos (pitidos)")}
         ${opt("voice", "Avisos por voz")}
         ${opt("autoRest", "Iniciar descanso automáticamente")}
+        ${opt("autoStart", "Arrancar solo el ejercicio tras prepararse")}
+        ${opt("metroTick", "Metrónomo: pitido suave a mitad de cada repetición")}
       </div>
+    </section>
+    <section class="section">
+      <div class="section-head"><h2>Preparación entre ejercicios</h2></div>
+      <div class="seg" role="radiogroup" aria-label="Segundos de preparación">
+        ${[0, 5, 10, 15, 20]
+          .map((n) => `<button role="radio" aria-checked="${+prefs.prep === n}" class="${+prefs.prep === n ? "on" : ""}" data-prep="${n}">${n ? n + " s" : "No"}</button>`)
+          .join("")}
+      </div>
+      <p class="muted small">Cuenta regresiva para acomodarte antes de cada ejercicio nuevo. Si el descanso de la pauta es más largo, se usa ese.</p>
       <button class="btn ghost full mt" data-act="test">Probar sonido</button>
       <p class="muted small">En iPhone, si no escuchas los pitidos, revisa que el interruptor de silencio esté desactivado.</p>
     </section>
@@ -1198,6 +1426,13 @@ function renderSettings() {
       <div class="section-head"><h2>Pauta</h2></div>
       <button class="row-link" data-act="edit"><span><b>Editar pauta</b><small>${esc(plan.name || "")} · ${plan.days.length} ${plan.days.length === 1 ? "día" : "días"}</small></span>${icon("chevron")}</button>
     </section>`;
+  $app.querySelectorAll("[data-prep]").forEach((b) =>
+    b.addEventListener("click", () => {
+      prefs.prep = +b.dataset.prep;
+      save(LS.prefs, prefs);
+      render();
+    })
+  );
   $app.querySelectorAll("[data-pref]").forEach((c) =>
     c.addEventListener("change", () => {
       prefs[c.dataset.pref] = c.checked;
