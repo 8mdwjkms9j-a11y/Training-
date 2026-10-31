@@ -29,6 +29,9 @@ jobs:
         run: |
           mkdir _site
           cp -r index.html app.js plan.js styles.css sw.js manifest.webmanifest icons _site/
+          echo "{\"v\": \"${GITHUB_SHA}\"}" > _site/version.json
+          sed -i "s/__BUILD__/${GITHUB_SHA}/" _site/app.js
+          sed -i "s/entreno-v[0-9]*/entreno-${GITHUB_SHA::8}/" _site/sw.js
 
       - uses: actions/configure-pages@v5
 

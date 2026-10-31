@@ -4,6 +4,10 @@
    Entreno — app de pauta de entrenamiento (sin dependencias)
    ============================================================ */
 
+// Lo reemplaza la publicación en GitHub por el identificador de la versión.
+const APP_VERSION = "__BUILD__";
+const DEV_BUILD = APP_VERSION.startsWith("__");
+
 const LS = {
   plan: "entreno.plan",
   history: "entreno.history",
@@ -396,7 +400,32 @@ function setHeader(title, showBack) {
   $back.hidden = !showBack || tabView;
 }
 
+// ---------- estado visual (trabajo / preparación / descanso / cambio de lado) ----------
+let lastState = null;
+function currentState() {
+  if (route.view === "summary") return "done";
+  if (route.view !== "workout" || !session) return "idle";
+  if (session.phase === "rest") return session.restKind || (curStep().side === 2 ? "side" : "rest");
+  return "work";
+}
+const STATE_LABEL = { work: "En ejercicio", prep: "Prepárate", side: "Cambia de lado", rest: "Descanso", done: "Completado" };
+
 function render() {
+  const state = currentState();
+  const changed = lastState !== null && state !== lastState && route.view === "workout";
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (changed && document.startViewTransition && !reduce && !render.inVT) {
+    render.inVT = true;
+    const vt = document.startViewTransition(() => renderNow(state, changed));
+    vt.finished.finally(() => (render.inVT = false));
+    return;
+  }
+  renderNow(state, changed);
+}
+
+function renderNow(state, changed) {
+  document.documentElement.dataset.state = state;
+  lastState = state;
   clearInterval(ticker);
   ticker = null;
   updateClock();
@@ -415,6 +444,7 @@ function render() {
   };
   (views[route.view] || renderHome)();
   renderTabbar();
+  if (changed) $app.querySelector(".phase")?.classList.add("morph");
 }
 
 function bindActs(map) {
@@ -458,6 +488,7 @@ const ICON = {
   list: '<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   chevron: '<path d="m9 6 6 6-6 6"/>',
+  refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>',
 };
 const icon = (n, cls = "") =>
   `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[n]}</svg>`;
@@ -1190,6 +1221,7 @@ function renderWorkout() {
       <span>${ex.block ? esc(ex.block) + " · " : ""}paso ${session.i + 1} de ${total}</span>
       <span class="dots">${setDots}</span>
     </div>
+    <div class="state-pill" role="status"><i></i>${STATE_LABEL[currentState()] || ""}</div>
     ${groupBar}
     <h2 class="ex-name">${esc(ex.name)}</h2>
     <div class="row gap wrap">
@@ -1422,115 +1454,96 @@ function spaced(ctx, text, x, y, spacing) {
   ctx.textAlign = align;
 }
 
-function drawPulse(ctx, mags, cx, cy, w, h, lw) {
-  const n = Math.max(1, mags.length);
-  const max = Math.max(1, ...mags);
-  const seg = w / n;
-  const x0 = cx - w / 2;
-  const pts = [[x0 - seg * 0.4, cy]];
-  mags.forEach((m, i) => {
-    const k = 0.35 + 0.65 * Math.sqrt(m / max);
-    const x = x0 + i * seg;
-    pts.push(
-      [x + seg * 0.22, cy],
-      [x + seg * 0.3, cy + h * 0.06 * k],
-      [x + seg * 0.42, cy - h * 0.5 * k],
-      [x + seg * 0.56, cy + h * 0.26 * k],
-      [x + seg * 0.66, cy],
-      [x + seg * 0.78, cy - h * 0.05 * k],
-      [x + seg * 0.88, cy]
-    );
-  });
-  pts.push([x0 + w + seg * 0.4, cy]);
-  const g = ctx.createLinearGradient(x0, 0, x0 + w, 0);
-  g.addColorStop(0, "#ff4f2a");
-  g.addColorStop(1, "#ffb648");
-  ctx.save();
-  ctx.lineWidth = lw;
-  ctx.lineJoin = "round";
-  ctx.lineCap = "round";
-  ctx.strokeStyle = g;
-  ctx.shadowColor = "rgba(255, 107, 53, 0.55)";
-  ctx.shadowBlur = lw * 1.6;
-  ctx.beginPath();
-  pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
-  ctx.stroke();
-  const [ex, ey] = pts[pts.length - 1];
-  ctx.shadowColor = "rgba(94, 200, 242, 0.9)";
-  ctx.shadowBlur = lw * 2;
-  ctx.fillStyle = "#eafaff";
-  ctx.beginPath();
-  ctx.arc(ex, ey, lw * 0.95, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
+// Paleta del anillo: de frío a cálido (igual que el ícono)
+const RING_STOPS = ["#52c7e6", "#8a93ff", "#b29dff", "#ffb39c", "#ff7448"];
+const INK = "#f4efe6"; // blanco cálido, tipo papel
+const INK_SOFT = "rgba(244, 239, 230, 0.72)";
+const INK_LINE = "rgba(244, 239, 230, 0.32)";
+
+function plannedSets(e) {
+  const day = plan.days.find((d) => d.name === e.dayName);
+  if (!day) return 0;
+  const wk = plan.weeks?.[e.week]?.sets || weekSets();
+  return day.exercises.reduce((n, ex) => n + setsOf(ex, wk), 0);
 }
 
-function drawMark(ctx, cx, cy, r) {
-  // mini versión del ícono: anillo + pulso
+function drawRing(ctx, cx, cy, r, lw, frac) {
   ctx.save();
   ctx.lineCap = "round";
-  ctx.lineWidth = r * 0.26;
-  ctx.strokeStyle = "rgba(255,255,255,0.18)";
+  ctx.lineWidth = lw;
+  ctx.strokeStyle = "rgba(244, 239, 230, 0.14)";
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
   ctx.stroke();
-  const g = ctx.createLinearGradient(cx - r, cy - r, cx + r, cy + r);
-  g.addColorStop(0, "#ff4f2a");
-  g.addColorStop(1, "#ffc24a");
-  ctx.strokeStyle = g;
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * 0.8);
-  ctx.stroke();
-  ctx.strokeStyle = "#fff";
-  ctx.lineWidth = r * 0.14;
-  ctx.lineJoin = "round";
-  const u = r / 2.6;
-  ctx.beginPath();
-  [[-1.5, 0], [-0.7, 0], [-0.4, -0.7], [0, 0.95], [0.38, -1.2], [0.72, 0], [1.5, 0]].forEach(([x, y], i) =>
-    i ? ctx.lineTo(cx + x * u, cy + y * u) : ctx.moveTo(cx + x * u, cy + y * u)
-  );
-  ctx.stroke();
+  const a0 = -Math.PI / 2;
+  const span = Math.PI * 2 * Math.max(0.02, Math.min(1, frac));
+  // degradado a lo largo del arco: segmentos cortos con color interpolado
+  const N = 240;
+  const lerp = (c1, c2, t) => {
+    const h = (c) => [1, 3, 5].map((k) => parseInt(c.slice(k, k + 2), 16));
+    const A = h(c1), B = h(c2);
+    return `rgb(${A.map((v, i) => Math.round(v + (B[i] - v) * t)).join(",")})`;
+  };
+  for (let i = 0; i < N; i++) {
+    const t = i / N;
+    const seg = t * (RING_STOPS.length - 1);
+    const k = Math.min(RING_STOPS.length - 2, Math.floor(seg));
+    ctx.strokeStyle = lerp(RING_STOPS[k], RING_STOPS[k + 1], seg - k);
+    ctx.lineCap = i === 0 || i === N - 1 ? "round" : "butt";
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, a0 + span * t, a0 + span * ((i + 1.4) / N));
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
-function drawWordmark(ctx, cx, y, size) {
+function drawWordmark(ctx, cx, y, size, align = "center") {
   ctx.save();
-  ctx.font = `800 ${size}px ${F_DISPLAY}`;
-  ctx.fillStyle = "#fff";
-  ctx.textAlign = "center";
+  ctx.font = `600 ${size}px ${F_BODY}`;
+  ctx.fillStyle = INK_SOFT;
   ctx.textBaseline = "middle";
-  const markR = size * 0.36;
   const text = "ENTRENO";
-  const sp = size * 0.08;
+  const sp = size * 0.42;
   const tw = [...text].reduce((a, c) => a + ctx.measureText(c).width, 0) + sp * (text.length - 1);
-  const gap = size * 0.3;
-  const totalW = markR * 2 + gap + tw;
-  const left = cx - totalW / 2;
-  drawMark(ctx, left + markR, y, markR);
-  spaced(ctx, text, left + markR * 2 + gap + tw / 2, y + size * 0.04, sp);
+  const mr = size * 0.42, gap = size * 0.7;
+  const total = mr * 2 + gap + tw;
+  const left = align === "center" ? cx - total / 2 : cx;
+  drawRing(ctx, left + mr, y, mr, size * 0.16, 0.82);
+  spaced(ctx, text, left + mr * 2 + gap + tw / 2, y + 1, sp);
   ctx.restore();
 }
 
-function statBlock(ctx, x, y, label, value, lSize, vSize) {
-  ctx.textAlign = "center";
+function statBlock(ctx, x, y, label, value, lSize, vSize, align = "center") {
+  ctx.textAlign = align;
   ctx.textBaseline = "alphabetic";
-  ctx.fillStyle = "rgba(255,255,255,0.88)";
-  ctx.font = `700 ${lSize}px ${F_BODY}`;
+  ctx.fillStyle = INK_SOFT;
+  ctx.font = `500 ${lSize}px ${F_BODY}`;
   ctx.fillText(label, x, y);
-  ctx.fillStyle = "#fff";
-  ctx.font = `700 ${vSize}px ${F_DISPLAY}`;
+  ctx.fillStyle = INK;
+  ctx.font = `500 ${vSize}px ${F_DISPLAY}`;
   ctx.fillText(value, x, y + vSize * 0.98);
 }
 
+function hairline(ctx, x1, y, x2) {
+  ctx.save();
+  ctx.strokeStyle = INK_LINE;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x1, y);
+  ctx.lineTo(x2, y);
+  ctx.stroke();
+  ctx.restore();
+}
+
 function subtitle(e) {
-  const d = new Date(e.date).toLocaleDateString("es", { weekday: "short", day: "numeric", month: "short" });
-  const wk = e.week != null && plan.weeks?.[e.week] ? ` · SEMANA ${e.week + 1}` : "";
-  return `${e.dayName} · ${d}${wk}`.toUpperCase();
+  const d = new Date(e.date).toLocaleDateString("es", { weekday: "long", day: "numeric", month: "long" });
+  const wk = e.week != null && plan.weeks?.[e.week] ? ` · semana ${e.week + 1}` : "";
+  return `${e.dayName} · ${d}${wk}`;
 }
 
 const SHARE_TEMPLATES = [
-  { id: "pulso", name: "Pulso", transparent: true },
-  { id: "datos", name: "Datos", transparent: true },
+  { id: "anillo", name: "Anillo", transparent: true },
+  { id: "editorial", name: "Editorial", transparent: true },
   { id: "tarjeta", name: "Tarjeta", transparent: false },
 ];
 
@@ -1539,33 +1552,32 @@ function drawShare(canvas, tpl, e) {
   canvas.height = SHARE_H;
   const ctx = canvas.getContext("2d");
   const st = entryStats(e);
+  const planned = plannedSets(e);
+  const frac = planned ? st.sets / planned : 1;
   const W = SHARE_W, H = SHARE_H, cx = W / 2;
   ctx.clearRect(0, 0, W, H);
+  const mm = Math.floor(st.dur / 60), ss = String(st.dur % 60).padStart(2, "0");
+  const timeTxt = mm >= 60 ? `${Math.floor(mm / 60)}:${String(mm % 60).padStart(2, "0")}:${ss}` : `${mm}:${ss}`;
 
   if (!tpl.transparent) {
-    const bg = ctx.createLinearGradient(0, 0, W, H);
-    bg.addColorStop(0, "#1c1426");
-    bg.addColorStop(1, "#08090d");
-    ctx.fillStyle = bg;
+    ctx.fillStyle = "#0d0d10";
     ctx.fillRect(0, 0, W, H);
-    [[180, 260, 620, "rgba(255,107,53,0.55)"], [930, 1650, 600, "rgba(47,184,240,0.35)"], [980, 200, 420, "rgba(255,45,111,0.3)"]].forEach(([x, y, r, c]) => {
+    [[140, 220, 700, "rgba(255,116,72,0.22)"], [960, 1700, 700, "rgba(82,199,230,0.16)"], [940, 260, 520, "rgba(178,157,255,0.16)"]].forEach(([x, y, r, c]) => {
       const g = ctx.createRadialGradient(x, y, 0, x, y, r);
       g.addColorStop(0, c);
       g.addColorStop(1, "rgba(0,0,0,0)");
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, W, H);
     });
-    // panel de vidrio
     ctx.save();
-    const px = 90, py = 470, pw = W - 180, ph = 1060, pr = 64;
     ctx.beginPath();
-    ctx.roundRect(px, py, pw, ph, pr);
-    ctx.fillStyle = "rgba(255,255,255,0.07)";
+    ctx.roundRect(110, 400, W - 220, 1120, 56);
+    ctx.fillStyle = "rgba(244,239,230,0.05)";
     ctx.fill();
-    ctx.lineWidth = 3;
-    const rim = ctx.createLinearGradient(0, py, 0, py + ph);
-    rim.addColorStop(0, "rgba(255,255,255,0.35)");
-    rim.addColorStop(1, "rgba(255,255,255,0.05)");
+    ctx.lineWidth = 2;
+    const rim = ctx.createLinearGradient(0, 400, 0, 1520);
+    rim.addColorStop(0, "rgba(244,239,230,0.28)");
+    rim.addColorStop(1, "rgba(244,239,230,0.04)");
     ctx.strokeStyle = rim;
     ctx.stroke();
     ctx.restore();
@@ -1573,42 +1585,67 @@ function drawShare(canvas, tpl, e) {
 
   ctx.save();
   if (tpl.transparent) {
-    ctx.shadowColor = "rgba(0,0,0,0.35)";
-    ctx.shadowBlur = 18;
-    ctx.shadowOffsetY = 2;
+    ctx.shadowColor = "rgba(0,0,0,0.22)";
+    ctx.shadowBlur = 16;
   }
 
-  const three = [
-    ["Tiempo", fmtDur(st.dur)],
-    ["Ejercicios", String(st.ex)],
-    ["Series", String(st.sets)],
-  ];
-
-  if (tpl.id === "datos") {
-    const rows = [...three, st.vol ? ["Volumen", `${st.vol.toLocaleString("es")} kg`] : ["Repeticiones", String(st.reps)]];
-    let y = 560;
+  if (tpl.id === "editorial") {
+    const x = 150, right = W - 150;
+    let y = 520;
+    ctx.textAlign = "left";
+    ctx.font = `500 34px ${F_BODY}`;
+    ctx.fillStyle = INK_SOFT;
+    ctx.fillText(subtitle(e), x, y);
+    y += 70;
+    const rows = [
+      ["Tiempo", timeTxt],
+      ["Ejercicios", String(st.ex)],
+      ["Series", String(st.sets)],
+      st.vol ? ["Volumen", `${st.vol.toLocaleString("es")} kg`] : ["Repeticiones", String(st.reps)],
+    ];
     rows.forEach(([l, v]) => {
-      statBlock(ctx, cx, y, l, v, 44, 128);
-      y += 230;
+      hairline(ctx, x, y, right);
+      ctx.textAlign = "left";
+      ctx.font = `500 34px ${F_BODY}`;
+      ctx.fillStyle = INK_SOFT;
+      ctx.fillText(l, x, y + 64);
+      ctx.textAlign = "right";
+      ctx.font = `500 120px ${F_DISPLAY}`;
+      ctx.fillStyle = INK;
+      ctx.fillText(v, right, y + 150);
+      y += 196;
     });
-    ctx.shadowBlur = 0;
-    drawPulse(ctx, st.mags, cx, y + 40, 560, 170, 11);
-    ctx.shadowColor = "rgba(0,0,0,0.35)";
-    ctx.shadowBlur = tpl.transparent ? 18 : 0;
-    drawWordmark(ctx, cx, y + 230, 76);
+    hairline(ctx, x, y, right);
+    drawWordmark(ctx, x, y + 110, 34, "left");
   } else {
-    const top = tpl.transparent ? 640 : 780;
+    const ringY = tpl.transparent ? 760 : 800;
+    const r = 250;
     ctx.save();
     ctx.shadowColor = "transparent";
-    drawPulse(ctx, st.mags, cx, top, tpl.transparent ? 820 : 720, 440, 15);
+    drawRing(ctx, cx, ringY, r, 18, frac);
     ctx.restore();
-    drawWordmark(ctx, cx, top + 330, 84);
-    const colW = tpl.transparent ? 300 : 270;
-    three.forEach(([l, v], i) => statBlock(ctx, cx + (i - 1) * colW, top + 470, l, v, 38, 92));
-    ctx.font = `700 34px ${F_BODY}`;
-    ctx.fillStyle = "rgba(255,255,255,0.8)";
     ctx.textAlign = "center";
-    spaced(ctx, subtitle(e), cx, top + 680, 3);
+    ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = INK;
+    ctx.font = `500 150px ${F_DISPLAY}`;
+    ctx.fillText(timeTxt, cx, ringY + 50);
+    ctx.font = `500 32px ${F_BODY}`;
+    ctx.fillStyle = INK_SOFT;
+    spaced(ctx, "TIEMPO", cx, ringY + 110, 8);
+
+    const y0 = ringY + r + 150;
+    hairline(ctx, cx - 330, y0 - 60, cx + 330);
+    const cols = [
+      ["Ejercicios", String(st.ex)],
+      ["Series", String(st.sets)],
+      st.vol ? ["Kg", st.vol.toLocaleString("es")] : ["Reps", String(st.reps)],
+    ];
+    cols.forEach(([l, v], i) => statBlock(ctx, cx + (i - 1) * 230, y0, l, v, 32, 92));
+    ctx.font = `500 30px ${F_BODY}`;
+    ctx.fillStyle = INK_SOFT;
+    ctx.textAlign = "center";
+    ctx.fillText(subtitle(e), cx, y0 + 190);
+    drawWordmark(ctx, cx, y0 + 300, 30);
   }
   ctx.restore();
 }
@@ -1616,9 +1653,10 @@ function drawShare(canvas, tpl, e) {
 async function ensureShareFonts() {
   try {
     await Promise.all([
-      document.fonts.load(`800 80px ${F_DISPLAY}`),
+      document.fonts.load(`500 80px ${F_DISPLAY}`),
       document.fonts.load(`700 80px ${F_DISPLAY}`),
-      document.fonts.load(`700 40px ${F_BODY}`),
+      document.fonts.load(`500 40px ${F_BODY}`),
+      document.fonts.load(`600 40px ${F_BODY}`),
     ]);
   } catch {}
 }
@@ -1864,6 +1902,11 @@ function renderSettings() {
       <p class="muted small">Los pitidos suenan aunque el iPhone esté en silencio; súbele el volumen con los botones laterales.</p>
     </section>
     <section class="section">
+      <div class="section-head"><h2>App</h2></div>
+      <button class="row-link" data-act="update"><span><b>Actualizar app</b><small>Descarga la última versión sin borrar el acceso directo ni tu historial</small></span>${icon("refresh")}</button>
+      <p class="muted small">Versión ${DEV_BUILD ? "de desarrollo" : esc(APP_VERSION.slice(0, 7))}${latestVersion && latestVersion !== APP_VERSION ? " · hay una versión nueva" : ""}</p>
+    </section>
+    <section class="section">
       <div class="section-head"><h2>Pauta</h2></div>
       <button class="row-link" data-act="edit"><span><b>Editar pauta</b><small>${esc(plan.name || "")} · ${plan.days.length} ${plan.days.length === 1 ? "día" : "días"}</small></span>${icon("chevron")}</button>
     </section>`;
@@ -1882,6 +1925,7 @@ function renderSettings() {
   );
   bindActs({
     edit: () => go("edit"),
+    update: updateApp,
     test: () => {
       unlockAudio();
       ensurePlayback();
@@ -1916,6 +1960,39 @@ function renderSettings() {
   }, { passive: true });
 })();
 
+// ---------- actualizar la app ----------
+async function updateApp() {
+  toast("Actualizando…");
+  try {
+    const regs = (await navigator.serviceWorker?.getRegistrations?.()) || [];
+    await Promise.all(regs.map((r) => r.update().catch(() => {})));
+    if (window.caches) await Promise.all((await caches.keys()).map((k) => caches.delete(k)));
+  } catch {}
+  location.replace(location.pathname + "?u=" + Date.now());
+}
+
+let latestVersion = null;
+async function checkForUpdate() {
+  if (DEV_BUILD || location.protocol === "file:") return;
+  try {
+    const r = await fetch("version.json?t=" + Date.now(), { cache: "no-store" });
+    if (!r.ok) return;
+    latestVersion = (await r.json()).v;
+    if (latestVersion && latestVersion !== APP_VERSION && !session) showUpdateBanner();
+  } catch {}
+}
+function showUpdateBanner() {
+  if (document.querySelector(".update-banner")) return;
+  const b = document.createElement("div");
+  b.className = "update-banner";
+  b.innerHTML = `<span>Hay una versión nueva de la app</span><button class="btn primary">Actualizar</button>`;
+  b.querySelector("button").addEventListener("click", updateApp);
+  document.body.appendChild(b);
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") checkForUpdate();
+});
+
 // ---------- inicio ----------
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
   navigator.serviceWorker.register("sw.js").catch(() => {});
@@ -1925,3 +2002,4 @@ if (session && (!session.steps || !plan.days[session.dayIndex])) {
   save(LS.session, null);
 }
 render();
+checkForUpdate();

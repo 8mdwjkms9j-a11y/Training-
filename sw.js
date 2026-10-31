@@ -1,5 +1,5 @@
 // Service worker: permite abrir la app sin conexión.
-const CACHE = "entreno-v8";
+const CACHE = "entreno-v10";
 const ASSETS = [
   "./",
   "index.html",
@@ -7,9 +7,9 @@ const ASSETS = [
   "app.js",
   "plan.js",
   "manifest.webmanifest",
-  "icons/entreno-180-v2.png",
-  "icons/entreno-192-v2.png",
-  "icons/entreno-512-v2.png"
+  "icons/entreno-180-v3.png",
+  "icons/entreno-192-v3.png",
+  "icons/entreno-512-v3.png"
 ];
 
 self.addEventListener("install", (e) => {
@@ -30,13 +30,14 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== location.origin) return;
+  // "no-cache": siempre pregunta al servidor si hay versión nueva (rápido si no cambió)
   e.respondWith(
-    fetch(e.request)
+    fetch(e.request, { cache: "no-cache" })
       .then((res) => {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(e.request, copy));
         return res;
       })
-      .catch(() => caches.match(e.request))
+      .catch(() => caches.match(e.request, { ignoreSearch: true }))
   );
 });
