@@ -118,14 +118,27 @@ function youtubeId(url) {
   return m ? m[1] : null;
 }
 
+// "start" del ejercicio: segundos (95) o texto "1:35" / "1:02:10"
+function startSec(v) {
+  if (v === undefined || v === null || v === "") return 0;
+  if (typeof v === "number") return Math.max(0, Math.floor(v));
+  return String(v).split(":").reduce((acc, n) => acc * 60 + (+n || 0), 0);
+}
+
 function videoHtml(ex) {
   const url = ex.video;
   if (url) {
     const id = youtubeId(url);
+    const st = startSec(ex.start);
+    const from = st ? ` · desde ${fmt(st)}` : "";
+    const ytLink = id ? `https://www.youtube.com/watch?v=${id}${st ? `&t=${st}s` : ""}` : url;
     if (id && EMBED_OK) {
-      return `<div class="video"><iframe src="https://www.youtube-nocookie.com/embed/${id}?playsinline=1&rel=0&modestbranding=1"
+      return `<div class="video"><iframe src="https://www.youtube-nocookie.com/embed/${id}?playsinline=1&rel=0&modestbranding=1${st ? `&start=${st}` : ""}"
         title="${esc(ex.name)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe></div>
-        <a class="small link" href="${esc(url)}" target="_blank" rel="noopener">Abrir en YouTube ↗</a>`;
+        <a class="small link" href="${esc(ytLink)}" target="_blank" rel="noopener">Abrir en YouTube${from} ↗</a>`;
+    }
+    if (id) {
+      return `<a class="btn ghost full" href="${esc(ytLink)}" target="_blank" rel="noopener">▶ Ver video en YouTube${from}</a>`;
     }
     if (/\.(mp4|webm|mov|m4v)(\?|$)/i.test(url)) {
       return `<div class="video"><video src="${esc(url)}" controls playsinline loop muted></video></div>`;
@@ -1009,7 +1022,7 @@ function renderEdit() {
     <p class="muted small">Edita tu pauta en formato JSON. Campos por ejercicio:
       <code>name</code>, <code>block</code>, <code>group</code>, <code>sets</code> (número o <code>"auto"</code>),
       <code>reps</code> o <code>time</code>, <code>perSide</code>, <code>rest</code>, <code>rpe</code>,
-      <code>video</code> y <code>notes</code>. Ver detalles en <code>plan.js</code>.</p>
+      <code>video</code>, <code>start</code> (minuto del video, ej. <code>"1:35"</code>) y <code>notes</code>. Ver detalles en <code>plan.js</code>.</p>
     <textarea id="planText" spellcheck="false" autocapitalize="off" autocorrect="off">${esc(JSON.stringify(plan, null, 2))}</textarea>
     <div id="planErr" class="error" hidden></div>
     <button class="btn primary full big mt" data-act="savePlan">Guardar</button>

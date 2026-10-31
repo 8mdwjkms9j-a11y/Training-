@@ -18,6 +18,7 @@
 //               (en un circuito: el "rest" del ÚLTIMO ejercicio es el descanso entre rondas)
 //    rpe      : esfuerzo objetivo (RPE)
 //    video    : link de YouTube (o .mp4)
+//    start    : minuto donde parte el video para este ejercicio, ej. "1:35"
 //    notes    : indicaciones
 // ============================================================
 
@@ -93,23 +94,23 @@ window.DEFAULT_PLAN = {
         {
           block: "Movilidad", group: "Movilidad",
           name: "Pancake suelo", sets: "auto", reps: 6, rest: 0,
-          video: "https://www.youtube.com/watch?v=UYsvnlpSLdw"
+          video: "https://www.youtube.com/watch?v=UYsvnlpSLdw", start: ""
         },
         {
           block: "Movilidad", group: "Movilidad",
           name: "Posición rana", sets: "auto", time: 60, rest: 0,
-          video: "https://www.youtube.com/watch?v=UYsvnlpSLdw",
+          video: "https://www.youtube.com/watch?v=UYsvnlpSLdw", start: "",
           notes: "60–90 segundos. Si quieres llegar a 90 s, usa +15 s o sigue después del pitido."
         },
         {
           block: "Movilidad", group: "Movilidad",
           name: "Pancake pared", sets: "auto", reps: 6, rest: 0,
-          video: "https://www.youtube.com/watch?v=UYsvnlpSLdw"
+          video: "https://www.youtube.com/watch?v=UYsvnlpSLdw", start: ""
         },
         {
           block: "Movilidad", group: "Movilidad",
           name: "Leg lift pancake", sets: "auto", reps: 6, rest: 45,
-          video: "https://www.youtube.com/watch?v=UYsvnlpSLdw"
+          video: "https://www.youtube.com/watch?v=UYsvnlpSLdw", start: ""
         },
 
         // ---------------- FUERZA · DÍA 1 ----------------
