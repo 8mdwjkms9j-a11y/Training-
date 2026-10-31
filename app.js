@@ -44,7 +44,7 @@ let history = load(LS.history, []);
 let session = load(LS.session, null);
 let lastKg = load(LS.kg, {});
 let prefs = Object.assign(
-  { sound: true, voice: true, autoRest: true, week: "auto", prep: 10, autoStart: true, metroTick: true },
+  { sound: true, voice: true, autoRest: true, week: "auto", prep: 10, autoStart: true, metroEvery: false },
   load(LS.prefs, {})
 );
 let lastTempo = load("entreno.tempo", {});
@@ -377,7 +377,7 @@ let ticker = null;
 
 function go(view, params = {}) {
   route = { view, ...params };
-  document.body.classList.remove("nav-hidden");
+  document.body.classList.remove("nav-compact");
   render();
   window.scrollTo(0, 0);
 }
@@ -386,6 +386,7 @@ $back.addEventListener("click", () => {
   if (route.view === "workout") return go("day", { dayIndex: session ? session.dayIndex : 0 });
   if (route.view === "rpe" && route.from === "workout") return go("workout");
   if (route.view === "edit") return go("settings");
+  if (route.view === "share") return go("history");
   go("home");
 });
 
@@ -410,6 +411,7 @@ function render() {
     edit: renderEdit,
     settings: renderSettings,
     rpe: renderRpe,
+    share: renderShare,
   };
   (views[route.view] || renderHome)();
   renderTabbar();
@@ -849,11 +851,19 @@ const tempoOf = (ex) => +(lastTempo[ex.name] ?? ex.tempo) || 3;
 const metroBeats = (ex) => +ex.reps * (ex.alternate ? 2 : 1);
 const metroSides = (ex) => (ex.perSide && !ex.alternate ? 2 : 1);
 
+function bumpRep() {
+  const el = document.getElementById("repNum");
+  if (!el) return;
+  el.classList.remove("bump");
+  void el.offsetWidth;
+  el.classList.add("bump");
+}
+
 function metroStart() {
   session.metro = { running: true, t0: Date.now() + 500, elapsed: 0, side: 1, switchUntil: null, switchLeft: 0, lastBeat: -1, lastHalf: -1, lastCount: null };
   session.reps = 0;
   session.setStartedAt = Date.now();
-  say("Sigue el pitido");
+  say(prefs.metroEvery ? "Sigue el pitido" : "Sigue el conteo");
   persist();
 }
 function metroPause() {
@@ -936,10 +946,13 @@ function metroTick() {
     m.lastBeat = beat;
     session.reps = ex.alternate ? Math.floor(beat / 2) + 1 : beat + 1;
     const accent = ex.alternate ? beat % 2 === 0 : true;
-    click(accent, 0.75);
+    // Por defecto suena solo al inicio (y al final, más abajo); el conteo se ve en pantalla.
+    if (beat === 0) beep(990, 0.18, 1, 0.5);
+    else if (prefs.metroEvery) click(accent, 0.75);
+    bumpRep();
     persist();
   }
-  if (prefs.metroTick) {
+  if (prefs.metroEvery) {
     const half = Math.floor((el - tempo / 2) / tempo);
     if (half >= 0 && half < total && half !== m.lastHalf) {
       m.lastHalf = half;
@@ -1136,7 +1149,7 @@ function renderWorkout() {
         </div>
         ${
           !m
-            ? `<button class="btn primary full big mt" data-act="metroStart">${icon("play")} Iniciar metrónomo</button>
+            ? `<button class="btn primary full big mt" data-act="metroStart">${icon("play")} Iniciar conteo</button>
                <button class="text-btn full-w" data-act="doneReps">Marcar serie lista</button>`
             : `<div class="row gap mt">
                  <button class="btn ghost grow" data-act="metroToggle" id="metroPauseBtn">${m.running ? "Pausa" : "Seguir"}</button>
@@ -1304,8 +1317,8 @@ function metroStatusText(ex) {
   if (!m.running) return "en pausa · toca para seguir";
   const sides = metroSides(ex);
   if (ex.alternate) return m.lastBeat % 2 === 0 ? "lado 1" : "lado 2";
-  if (Date.now() < m.t0) return "empieza con el pitido";
-  return sides > 1 ? `lado ${m.side} de ${sides}` : "sigue el pitido";
+  if (Date.now() < m.t0) return "prepárate…";
+  return sides > 1 ? `lado ${m.side} de ${sides}` : prefs.metroEvery ? "sigue el pitido" : "sigue el conteo";
 }
 
 function adjustTimer(delta) {
@@ -1357,6 +1370,328 @@ function renderRpe() {
   bindActs({ back: () => go("workout") });
 }
 
+
+// ============================================================
+//  COMPARTIR (imagen PNG estilo historia, con o sin fondo)
+// ============================================================
+function entryStats(e) {
+  let ex = 0, sets = 0, reps = 0, vol = 0;
+  const mags = [];
+  for (const x of e.exercises) {
+    if (!x.sets.length) continue;
+    ex++;
+    let m = 0;
+    for (const st of x.sets) {
+      if (st.side !== 2) sets++;
+      if (st.reps) {
+        reps += st.reps;
+        m += st.reps;
+        if (st.kg) vol += st.reps * st.kg;
+      } else if (st.time) m += st.time / 3;
+    }
+    mags.push(m);
+  }
+  // agrupa en ~7 latidos para que el pulso se lea limpio
+  const beats = [];
+  const per = Math.max(1, Math.ceil(mags.length / 7));
+  for (let i = 0; i < mags.length; i += per) beats.push(mags.slice(i, i + per).reduce((x, y) => x + y, 0));
+  return { ex, sets, reps, vol: Math.round(vol), mags: beats, dur: e.duration };
+}
+
+function fmtDur(sec) {
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  return h ? `${h}h ${m}m` : `${m}m ${String(s).padStart(2, "0")}s`;
+}
+
+const SHARE_W = 1080, SHARE_H = 1920;
+const F_DISPLAY = '"Barlow Condensed", "Arial Narrow", sans-serif';
+const F_BODY = 'Manrope, -apple-system, "Helvetica Neue", sans-serif';
+
+function spaced(ctx, text, x, y, spacing) {
+  // texto con espaciado entre letras, centrado en x
+  const chars = [...text];
+  const widths = chars.map((c) => ctx.measureText(c).width);
+  const total = widths.reduce((a, b) => a + b, 0) + spacing * (chars.length - 1);
+  let cx = x - total / 2;
+  const align = ctx.textAlign;
+  ctx.textAlign = "left";
+  chars.forEach((c, i) => {
+    ctx.fillText(c, cx, y);
+    cx += widths[i] + spacing;
+  });
+  ctx.textAlign = align;
+}
+
+function drawPulse(ctx, mags, cx, cy, w, h, lw) {
+  const n = Math.max(1, mags.length);
+  const max = Math.max(1, ...mags);
+  const seg = w / n;
+  const x0 = cx - w / 2;
+  const pts = [[x0 - seg * 0.4, cy]];
+  mags.forEach((m, i) => {
+    const k = 0.35 + 0.65 * Math.sqrt(m / max);
+    const x = x0 + i * seg;
+    pts.push(
+      [x + seg * 0.22, cy],
+      [x + seg * 0.3, cy + h * 0.06 * k],
+      [x + seg * 0.42, cy - h * 0.5 * k],
+      [x + seg * 0.56, cy + h * 0.26 * k],
+      [x + seg * 0.66, cy],
+      [x + seg * 0.78, cy - h * 0.05 * k],
+      [x + seg * 0.88, cy]
+    );
+  });
+  pts.push([x0 + w + seg * 0.4, cy]);
+  const g = ctx.createLinearGradient(x0, 0, x0 + w, 0);
+  g.addColorStop(0, "#ff4f2a");
+  g.addColorStop(1, "#ffb648");
+  ctx.save();
+  ctx.lineWidth = lw;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.strokeStyle = g;
+  ctx.shadowColor = "rgba(255, 107, 53, 0.55)";
+  ctx.shadowBlur = lw * 1.6;
+  ctx.beginPath();
+  pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  ctx.stroke();
+  const [ex, ey] = pts[pts.length - 1];
+  ctx.shadowColor = "rgba(94, 200, 242, 0.9)";
+  ctx.shadowBlur = lw * 2;
+  ctx.fillStyle = "#eafaff";
+  ctx.beginPath();
+  ctx.arc(ex, ey, lw * 0.95, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawMark(ctx, cx, cy, r) {
+  // mini versión del ícono: anillo + pulso
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineWidth = r * 0.26;
+  ctx.strokeStyle = "rgba(255,255,255,0.18)";
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.stroke();
+  const g = ctx.createLinearGradient(cx - r, cy - r, cx + r, cy + r);
+  g.addColorStop(0, "#ff4f2a");
+  g.addColorStop(1, "#ffc24a");
+  ctx.strokeStyle = g;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * 0.8);
+  ctx.stroke();
+  ctx.strokeStyle = "#fff";
+  ctx.lineWidth = r * 0.14;
+  ctx.lineJoin = "round";
+  const u = r / 2.6;
+  ctx.beginPath();
+  [[-1.5, 0], [-0.7, 0], [-0.4, -0.7], [0, 0.95], [0.38, -1.2], [0.72, 0], [1.5, 0]].forEach(([x, y], i) =>
+    i ? ctx.lineTo(cx + x * u, cy + y * u) : ctx.moveTo(cx + x * u, cy + y * u)
+  );
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawWordmark(ctx, cx, y, size) {
+  ctx.save();
+  ctx.font = `800 ${size}px ${F_DISPLAY}`;
+  ctx.fillStyle = "#fff";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const markR = size * 0.36;
+  const text = "ENTRENO";
+  const sp = size * 0.08;
+  const tw = [...text].reduce((a, c) => a + ctx.measureText(c).width, 0) + sp * (text.length - 1);
+  const gap = size * 0.3;
+  const totalW = markR * 2 + gap + tw;
+  const left = cx - totalW / 2;
+  drawMark(ctx, left + markR, y, markR);
+  spaced(ctx, text, left + markR * 2 + gap + tw / 2, y + size * 0.04, sp);
+  ctx.restore();
+}
+
+function statBlock(ctx, x, y, label, value, lSize, vSize) {
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  ctx.fillStyle = "rgba(255,255,255,0.88)";
+  ctx.font = `700 ${lSize}px ${F_BODY}`;
+  ctx.fillText(label, x, y);
+  ctx.fillStyle = "#fff";
+  ctx.font = `700 ${vSize}px ${F_DISPLAY}`;
+  ctx.fillText(value, x, y + vSize * 0.98);
+}
+
+function subtitle(e) {
+  const d = new Date(e.date).toLocaleDateString("es", { weekday: "short", day: "numeric", month: "short" });
+  const wk = e.week != null && plan.weeks?.[e.week] ? ` · SEMANA ${e.week + 1}` : "";
+  return `${e.dayName} · ${d}${wk}`.toUpperCase();
+}
+
+const SHARE_TEMPLATES = [
+  { id: "pulso", name: "Pulso", transparent: true },
+  { id: "datos", name: "Datos", transparent: true },
+  { id: "tarjeta", name: "Tarjeta", transparent: false },
+];
+
+function drawShare(canvas, tpl, e) {
+  canvas.width = SHARE_W;
+  canvas.height = SHARE_H;
+  const ctx = canvas.getContext("2d");
+  const st = entryStats(e);
+  const W = SHARE_W, H = SHARE_H, cx = W / 2;
+  ctx.clearRect(0, 0, W, H);
+
+  if (!tpl.transparent) {
+    const bg = ctx.createLinearGradient(0, 0, W, H);
+    bg.addColorStop(0, "#1c1426");
+    bg.addColorStop(1, "#08090d");
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+    [[180, 260, 620, "rgba(255,107,53,0.55)"], [930, 1650, 600, "rgba(47,184,240,0.35)"], [980, 200, 420, "rgba(255,45,111,0.3)"]].forEach(([x, y, r, c]) => {
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, c);
+      g.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, W, H);
+    });
+    // panel de vidrio
+    ctx.save();
+    const px = 90, py = 470, pw = W - 180, ph = 1060, pr = 64;
+    ctx.beginPath();
+    ctx.roundRect(px, py, pw, ph, pr);
+    ctx.fillStyle = "rgba(255,255,255,0.07)";
+    ctx.fill();
+    ctx.lineWidth = 3;
+    const rim = ctx.createLinearGradient(0, py, 0, py + ph);
+    rim.addColorStop(0, "rgba(255,255,255,0.35)");
+    rim.addColorStop(1, "rgba(255,255,255,0.05)");
+    ctx.strokeStyle = rim;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  ctx.save();
+  if (tpl.transparent) {
+    ctx.shadowColor = "rgba(0,0,0,0.35)";
+    ctx.shadowBlur = 18;
+    ctx.shadowOffsetY = 2;
+  }
+
+  const three = [
+    ["Tiempo", fmtDur(st.dur)],
+    ["Ejercicios", String(st.ex)],
+    ["Series", String(st.sets)],
+  ];
+
+  if (tpl.id === "datos") {
+    const rows = [...three, st.vol ? ["Volumen", `${st.vol.toLocaleString("es")} kg`] : ["Repeticiones", String(st.reps)]];
+    let y = 560;
+    rows.forEach(([l, v]) => {
+      statBlock(ctx, cx, y, l, v, 44, 128);
+      y += 230;
+    });
+    ctx.shadowBlur = 0;
+    drawPulse(ctx, st.mags, cx, y + 40, 560, 170, 11);
+    ctx.shadowColor = "rgba(0,0,0,0.35)";
+    ctx.shadowBlur = tpl.transparent ? 18 : 0;
+    drawWordmark(ctx, cx, y + 230, 76);
+  } else {
+    const top = tpl.transparent ? 640 : 780;
+    ctx.save();
+    ctx.shadowColor = "transparent";
+    drawPulse(ctx, st.mags, cx, top, tpl.transparent ? 820 : 720, 440, 15);
+    ctx.restore();
+    drawWordmark(ctx, cx, top + 330, 84);
+    const colW = tpl.transparent ? 300 : 270;
+    three.forEach(([l, v], i) => statBlock(ctx, cx + (i - 1) * colW, top + 470, l, v, 38, 92));
+    ctx.font = `700 34px ${F_BODY}`;
+    ctx.fillStyle = "rgba(255,255,255,0.8)";
+    ctx.textAlign = "center";
+    spaced(ctx, subtitle(e), cx, top + 680, 3);
+  }
+  ctx.restore();
+}
+
+async function ensureShareFonts() {
+  try {
+    await Promise.all([
+      document.fonts.load(`800 80px ${F_DISPLAY}`),
+      document.fonts.load(`700 80px ${F_DISPLAY}`),
+      document.fonts.load(`700 40px ${F_BODY}`),
+    ]);
+  } catch {}
+}
+
+function renderShare() {
+  const e = history[route.entry];
+  if (!e) return go("history");
+  setHeader("Compartir", true);
+  $app.innerHTML = `
+    <div class="share-carousel" id="shareCar">
+      ${SHARE_TEMPLATES.map(
+        (t, i) => `<figure class="share-slide">
+          <div class="share-frame ${t.transparent ? "checker" : ""}"><canvas data-tpl="${i}" aria-label="Vista previa ${esc(t.name)}"></canvas></div>
+          <figcaption>${esc(t.name)}${t.transparent ? " · sin fondo" : ""}</figcaption>
+        </figure>`
+      ).join("")}
+    </div>
+    <div class="share-dots" id="shareDots">${SHARE_TEMPLATES.map((_, i) => `<i class="${i ? "" : "on"}"></i>`).join("")}</div>
+    <div class="share-actions">
+      <button class="btn primary big" data-act="shareNow">Compartir o guardar</button>
+      <button class="btn ghost big" data-act="copyImg">Copiar para Instagram</button>
+    </div>
+    <p class="muted small share-help">Para ponerlo sobre una foto: toca <b>Copiar para Instagram</b>, abre tu historia con la foto, mantén presionado y elige <b>Pegar</b>. Con <b>Compartir o guardar</b> puedes elegir <b>Guardar imagen</b> y queda en Fotos sin fondo.</p>`;
+
+  const canvases = [...$app.querySelectorAll("canvas[data-tpl]")];
+  const paint = () => canvases.forEach((c) => drawShare(c, SHARE_TEMPLATES[+c.dataset.tpl], e));
+  paint();
+  ensureShareFonts().then(paint);
+
+  const car = document.getElementById("shareCar");
+  const current = () => Math.round(car.scrollLeft / (car.firstElementChild.getBoundingClientRect().width + 14));
+  car.addEventListener("scroll", () => {
+    const k = current();
+    document.querySelectorAll("#shareDots i").forEach((d, i) => d.classList.toggle("on", i === k));
+  }, { passive: true });
+
+  const blobOf = () =>
+    new Promise((res) => canvases[Math.min(current(), canvases.length - 1)].toBlob((b) => res(b), "image/png"));
+  const fileName = () => `entreno-${new Date(e.date).toISOString().slice(0, 10)}-${SHARE_TEMPLATES[current()].id}.png`;
+
+  bindActs({
+    shareNow: async () => {
+      const blob = await blobOf();
+      const file = new File([blob], fileName(), { type: "image/png" });
+      try {
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file] });
+          return;
+        }
+      } catch (err) {
+        if (err && err.name === "AbortError") return;
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = file.name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      toast("Imagen descargada");
+    },
+    copyImg: async () => {
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ "image/png": blobOf() })]);
+        toast("Copiada ✓ Ahora pégala en tu historia");
+      } catch {
+        toast("No se pudo copiar; usa Compartir o guardar");
+      }
+    },
+  });
+}
+
 // ============================================================
 //  RESUMEN E HISTORIAL
 // ============================================================
@@ -1366,7 +1701,16 @@ function fmtSet(s) {
   return out;
 }
 
-function entryHtml(e) {
+function statsTiles(e) {
+  const st = entryStats(e);
+  return `<div class="tiles">
+    <div><small>Tiempo</small><b>${fmtDur(st.dur)}</b></div>
+    <div><small>Ejercicios</small><b>${st.ex}</b></div>
+    <div><small>Series</small><b>${st.sets}</b></div>
+  </div>`;
+}
+
+function entryHtml(e, idx = null) {
   const rows = e.exercises
     .filter((x) => x.sets.length)
     .map((x) => {
@@ -1384,6 +1728,7 @@ function entryHtml(e) {
     <div class="row between"><div class="card-title">${esc(e.dayName)}</div><span class="muted">${fmtDate(e.date)}</span></div>
     <div class="muted small">Duración ${fmt(e.duration)}${wk}</div>
     <div class="mt">${rows || `<span class="muted small">Sin series registradas</span>`}</div>
+    ${idx !== null ? `<button class="text-btn" data-share="${idx}">Compartir</button>` : ""}
   </div>`;
 }
 
@@ -1392,9 +1737,11 @@ function renderSummary() {
   setHeader("Resumen", true);
   $app.innerHTML = `
     <div class="done-hero"><div class="eyebrow">Entrenamiento completado</div><div class="done-title">Buen trabajo</div></div>
-    ${e ? entryHtml(e) : ""}
-    <button class="btn primary full big mt" data-act="home">Volver al inicio</button>`;
-  bindActs({ home: () => go("home") });
+    ${e ? statsTiles(e) : ""}
+    <button class="btn primary full big mt" data-act="share">Compartir entrenamiento</button>
+    ${e ? `<div class="mt">${entryHtml(e)}</div>` : ""}
+    <button class="btn ghost full big mt" data-act="home">Volver al inicio</button>`;
+  bindActs({ home: () => go("home"), share: () => go("share", { entry: route.entry }) });
 }
 
 function renderHistory() {
@@ -1406,8 +1753,9 @@ function renderHistory() {
       <div class="card stat"><b>${total}</b><span class="muted">entrenamientos</span></div>
       <div class="card stat"><b>${week}</b><span class="muted">últimos 7 días</span></div>
     </div>
-    <div class="list mt">${history.slice().reverse().map(entryHtml).join("") || `<p class="muted center">Aún no hay entrenamientos guardados.</p>`}</div>
+    <div class="list mt">${history.map((h, i) => entryHtml(h, i)).reverse().join("") || `<p class="muted center">Aún no hay entrenamientos guardados.</p>`}</div>
     ${total ? `<button class="btn danger-ghost full mt" data-act="clear">Borrar historial</button>` : ""}`;
+  $app.querySelectorAll("[data-share]").forEach((b) => b.addEventListener("click", () => go("share", { entry: +b.dataset.share })));
   bindActs({
     clear: async () => {
       if (await ask("¿Borrar todo el historial?")) {
@@ -1501,7 +1849,7 @@ function renderSettings() {
         ${opt("voice", "Avisos por voz")}
         ${opt("autoRest", "Iniciar descanso automáticamente")}
         ${opt("autoStart", "Arrancar solo el ejercicio tras prepararse")}
-        ${opt("metroTick", "Metrónomo: pitido suave a mitad de cada repetición")}
+        ${opt("metroEvery", "Metrónomo: sonar en cada repetición (si no, solo al inicio y al final)")}
       </div>
     </section>
     <section class="section">
@@ -1539,7 +1887,7 @@ function renderSettings() {
       ensurePlayback();
       if (!session) setTimeout(stopPlayback, 5000);
       beep(880, 0.15, 2);
-      setTimeout(() => [0, 1, 2, 3].forEach((k) => setTimeout(() => click(k === 0, 0.75), k * 500)), 600);
+      if (prefs.metroEvery) setTimeout(() => [0, 1, 2, 3].forEach((k) => setTimeout(() => click(k === 0, 0.75), k * 500)), 600);
       say("Sonido de prueba");
     },
   });
@@ -1555,9 +1903,9 @@ function renderSettings() {
     const y = Math.max(0, window.scrollY);
     const nearBottom = window.innerHeight + y >= document.documentElement.scrollHeight - 8;
     const dy = y - lastY;
-    if (y < 40 || nearBottom) document.body.classList.remove("nav-hidden");
-    else if (dy > 6) document.body.classList.add("nav-hidden");
-    else if (dy < -6) document.body.classList.remove("nav-hidden");
+    if (y < 40 || nearBottom) document.body.classList.remove("nav-compact");
+    else if (dy > 6) document.body.classList.add("nav-compact");
+    else if (dy < -6) document.body.classList.remove("nav-compact");
     if (Math.abs(dy) > 6 || y < 40) lastY = y;
   };
   window.addEventListener("scroll", () => {

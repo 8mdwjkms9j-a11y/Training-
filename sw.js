@@ -1,5 +1,5 @@
 // Service worker: permite abrir la app sin conexión.
-const CACHE = "entreno-v6";
+const CACHE = "entreno-v8";
 const ASSETS = [
   "./",
   "index.html",
@@ -7,9 +7,9 @@ const ASSETS = [
   "app.js",
   "plan.js",
   "manifest.webmanifest",
-  "icons/icon-192.png",
-  "icons/icon-512.png",
-  "icons/apple-touch-icon.png"
+  "icons/entreno-180-v2.png",
+  "icons/entreno-192-v2.png",
+  "icons/entreno-512-v2.png"
 ];
 
 self.addEventListener("install", (e) => {
