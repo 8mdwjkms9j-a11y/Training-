@@ -110,6 +110,9 @@ function exTarget(ex, wk) {
   return parts.join(" · ");
 }
 
+// Dentro de un marco (página de Claude) los videos incrustados se bloquean: se abren en YouTube.
+const EMBED_OK = (() => { try { return window.self === window.top; } catch { return false; } })();
+
 function youtubeId(url) {
   const m = String(url).match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([\w-]{11})/);
   return m ? m[1] : null;
@@ -119,7 +122,7 @@ function videoHtml(ex) {
   const url = ex.video;
   if (url) {
     const id = youtubeId(url);
-    if (id) {
+    if (id && EMBED_OK) {
       return `<div class="video"><iframe src="https://www.youtube-nocookie.com/embed/${id}?playsinline=1&rel=0&modestbranding=1"
         title="${esc(ex.name)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe></div>
         <a class="small link" href="${esc(url)}" target="_blank" rel="noopener">Abrir en YouTube ↗</a>`;
@@ -127,10 +130,35 @@ function videoHtml(ex) {
     if (/\.(mp4|webm|mov|m4v)(\?|$)/i.test(url)) {
       return `<div class="video"><video src="${esc(url)}" controls playsinline loop muted></video></div>`;
     }
-    return `<a class="btn ghost full" href="${esc(url)}" target="_blank" rel="noopener">▶ Ver video</a>`;
+    return `<a class="btn ghost full" href="${esc(url)}" target="_blank" rel="noopener">▶ Ver video${id ? " en YouTube" : ""}</a>`;
   }
   const q = encodeURIComponent(`${ex.name} ejercicio técnica`);
   return `<a class="btn ghost full" href="https://www.youtube.com/results?search_query=${q}" target="_blank" rel="noopener">🔎 Buscar video en YouTube</a>`;
+}
+
+// ---------- diálogos propios (confirm/alert no funcionan en todas partes) ----------
+function ask(msg, okText = "Sí") {
+  return new Promise((resolve) => {
+    const d = document.createElement("div");
+    d.className = "modal";
+    d.innerHTML = `<div class="modal-box"><p>${esc(msg)}</p>
+      <div class="row gap"><button class="btn ghost grow" data-r="0">Cancelar</button>
+      <button class="btn primary grow" data-r="1">${esc(okText)}</button></div></div>`;
+    d.addEventListener("click", (e) => {
+      const r = e.target.closest("[data-r]");
+      if (!r && e.target !== d) return;
+      d.remove();
+      resolve(r ? r.dataset.r === "1" : false);
+    });
+    document.body.appendChild(d);
+  });
+}
+function toast(msg) {
+  const t = document.createElement("div");
+  t.className = "toast";
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2200);
 }
 
 // ---------- grupos (circuitos / superseries) ----------
@@ -408,8 +436,8 @@ function renderHome() {
   );
   bindActs({
     resume: () => go("workout"),
-    discard: () => {
-      if (confirm("¿Descartar el entrenamiento en curso?")) {
+    discard: async () => {
+      if (await ask("¿Descartar el entrenamiento en curso?")) {
         session = null;
         save(LS.session, null);
         keepAwake(false);
@@ -493,8 +521,8 @@ function renderDay() {
 
   bindActs({
     resume: () => go("workout"),
-    start: () => {
-      if (otherSession && !confirm("Hay otro entrenamiento en curso. ¿Descartarlo y empezar este?")) return;
+    start: async () => {
+      if (otherSession && !(await ask("Hay otro entrenamiento en curso. ¿Descartarlo y empezar este?"))) return;
       startSession(route.dayIndex);
     },
   });
@@ -515,7 +543,7 @@ function startSession(dayIndex) {
   unlockAudio();
   const day = plan.days[dayIndex];
   const steps = buildSteps(day, weekSets());
-  if (!steps.length) return alert("Este día no tiene ejercicios.");
+  if (!steps.length) return toast("Este día no tiene ejercicios.");
   session = {
     dayIndex,
     steps,
@@ -857,8 +885,8 @@ function renderWorkout() {
     prevEx: () => jumpStep(-1),
     nextEx: () => jumpStep(1),
     rpe: () => go("rpe", { from: "workout" }),
-    finish: () => {
-      if (confirm("¿Terminar y guardar el entrenamiento?")) finishSession();
+    finish: async () => {
+      if (await ask("¿Terminar y guardar el entrenamiento?")) finishSession();
     },
   });
 }
@@ -962,8 +990,8 @@ function renderHistory() {
     <div class="list mt">${history.slice().reverse().map(entryHtml).join("") || `<p class="muted center">Aún no hay entrenamientos guardados.</p>`}</div>
     ${total ? `<button class="btn danger-ghost full mt" data-act="clear">Borrar historial</button>` : ""}`;
   bindActs({
-    clear: () => {
-      if (confirm("¿Borrar todo el historial?")) {
+    clear: async () => {
+      if (await ask("¿Borrar todo el historial?")) {
         history = [];
         save(LS.history, history);
         render();
@@ -1008,13 +1036,13 @@ function renderEdit() {
     copyPlan: async () => {
       try {
         await navigator.clipboard.writeText(ta.value);
-        alert("Pauta copiada al portapapeles");
+        toast("Pauta copiada ✓");
       } catch {
         ta.select();
       }
     },
-    resetPlan: () => {
-      if (!confirm("¿Volver a la pauta original del archivo plan.js? Se pierden tus cambios hechos en la app.")) return;
+    resetPlan: async () => {
+      if (!(await ask("¿Volver a la pauta original del archivo plan.js? Se pierden tus cambios hechos en la app."))) return;
       plan = structuredClone(window.DEFAULT_PLAN);
       save(LS.plan, null);
       render();
