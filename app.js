@@ -19,17 +19,26 @@ const LS = {
 const STANDALONE = window.navigator.standalone === true || window.matchMedia("(display-mode: standalone)").matches;
 document.documentElement.classList.toggle("standalone", STANDALONE);
 
-// iOS (app en pantalla de inicio + barra de estado translúcida) a veces calcula la
-// pantalla más corta de lo real y lo "fijo abajo" queda flotando. Medimos la diferencia.
-function fixViewport() {
-  const gap = STANDALONE ? Math.round(screen.height - window.innerHeight) : 0;
+// ---------- marco de la app ----------
+// La página no hace scroll: solo el contenido (#app). El marco (#shell) mide
+// exactamente la pantalla, así el menú y todo lo "fijo abajo" queda anclado al borde
+// aunque iOS calcule mal el alto (app en inicio, rebote, teclado).
+const $shell = document.getElementById("shell");
+function setAppHeight() {
   const portrait = window.matchMedia("(orientation: portrait)").matches;
-  const ok = portrait && gap > 0 && gap < 200; // >200 suele ser el teclado: no corregir
-  document.documentElement.style.setProperty("--vp-gap", (ok ? gap : 0) + "px");
+  let h = window.innerHeight;
+  if (STANDALONE && portrait && screen.height > h && screen.height - h < 200) h = screen.height;
+  document.documentElement.style.setProperty("--app-h", h + "px");
 }
-fixViewport();
-window.addEventListener("resize", fixViewport);
-window.addEventListener("orientationchange", () => setTimeout(fixViewport, 300));
+setAppHeight();
+window.addEventListener("resize", setAppHeight);
+window.addEventListener("orientationchange", () => setTimeout(setAppHeight, 300));
+// si iOS desplaza la ventana (p. ej. al cerrar el teclado), la devolvemos a su lugar
+const resetWindowScroll = () => {
+  if (window.scrollY || window.scrollX) window.scrollTo(0, 0);
+};
+document.addEventListener("focusout", () => setTimeout(resetWindowScroll, 50));
+window.addEventListener("scroll", resetWindowScroll, { passive: true });
 
 // ---------- panel inferior (bottom sheet) ----------
 let closeSheet = null;
@@ -47,7 +56,7 @@ function openSheet({ title, subtitle = "", body, onClose }) {
       </header>
       <div class="sheet-body">${body}</div>
     </section>`;
-  document.body.appendChild(wrap);
+  $shell.appendChild(wrap);
   document.body.classList.add("sheet-open");
   const sheet = wrap.querySelector(".sheet");
   const sbody = wrap.querySelector(".sheet-body");
@@ -256,14 +265,14 @@ function ask(msg, okText = "Sí") {
       d.remove();
       resolve(r ? r.dataset.r === "1" : false);
     });
-    document.body.appendChild(d);
+    $shell.appendChild(d);
   });
 }
 function toast(msg) {
   const t = document.createElement("div");
   t.className = "toast";
   t.textContent = msg;
-  document.body.appendChild(t);
+  $shell.appendChild(t);
   setTimeout(() => t.remove(), 2200);
 }
 
@@ -466,7 +475,7 @@ function go(view, params = {}) {
   route = { view, ...params };
   document.body.classList.remove("nav-compact");
   render();
-  window.scrollTo(0, 0);
+  $app.scrollTop = 0;
 }
 
 $back.addEventListener("click", () => {
@@ -779,12 +788,13 @@ const TABS = [
 const $tabbar = document.createElement("nav");
 $tabbar.className = "tabbar";
 $tabbar.setAttribute("aria-label", "Secciones");
-document.body.appendChild($tabbar);
+$shell.appendChild($tabbar);
 function renderTabbar() {
   const v = route.view;
   const show = ["home", "history", "rpe", "settings"].includes(v) && !(v === "rpe" && route.from === "workout");
   document.body.classList.toggle("has-tabbar", show);
   document.body.classList.toggle("is-home", v === "home");
+  document.body.classList.toggle("is-workout", v === "workout");
   $tabbar.hidden = !show;
   if (!show) return;
   $tabbar.innerHTML = TABS.map(
@@ -1315,7 +1325,7 @@ function renderWorkout() {
   // solo vuelve arriba al cambiar de ejercicio (evita saltos en cada redibujo)
   if (renderWorkout.lastEx !== `${session.dayIndex}:${st.ex}`) {
     renderWorkout.lastEx = `${session.dayIndex}:${st.ex}`;
-    window.scrollTo(0, 0);
+    $app.scrollTop = 0;
   }
 
   bindActs({
@@ -2100,13 +2110,13 @@ function renderSettings() {
 (() => {
   // Con histéresis: solo cambia tras recorrer ~28px en la misma dirección,
   // e ignora el "rebote" de iOS arriba y abajo (evita que el menú tiemble).
-  let lastY = Math.max(0, window.scrollY);
+  let lastY = 0;
   let acc = 0;
   let ticking = false;
   const update = () => {
     ticking = false;
-    const max = document.documentElement.scrollHeight - window.innerHeight;
-    const raw = window.scrollY;
+    const max = $app.scrollHeight - $app.clientHeight;
+    const raw = $app.scrollTop;
     if (raw < 0 || raw > max + 1) return; // rebote elástico
     const y = raw;
     const dy = y - lastY;
@@ -2121,7 +2131,7 @@ function renderSettings() {
     if (acc > 28) document.body.classList.add("nav-compact");
     else if (acc < -28) document.body.classList.remove("nav-compact");
   };
-  window.addEventListener(
+  $app.addEventListener(
     "scroll",
     () => {
       if (!ticking) {
@@ -2279,7 +2289,7 @@ function showUpdateBanner() {
   b.className = "update-banner";
   b.innerHTML = `<span>Hay una versión nueva de la app</span><button class="btn primary">Actualizar</button>`;
   b.querySelector("button").addEventListener("click", updateApp);
-  document.body.appendChild(b);
+  $shell.appendChild(b);
 }
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") checkForUpdate();

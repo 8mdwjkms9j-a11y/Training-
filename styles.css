@@ -208,7 +208,7 @@ body.is-home main { padding-top: calc(18px + var(--safe-top)); }
    solo se anima la escala desde el borde inferior. */
 .tabbar {
   position: fixed; z-index: 20; left: 0; right: 0; margin: 0 auto;
-  bottom: calc(max(12px, var(--safe-bottom) + 4px) - var(--vp-gap, 0px));
+  bottom: max(12px, calc(var(--safe-bottom) + 4px));
   width: min(400px, calc(100% - 32px));
   display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; padding: 6px;
   border-radius: 999px;
@@ -406,7 +406,7 @@ code { background: var(--surface-2); padding: 1px 5px; border-radius: 5px; font-
 .modal-box { background: rgba(30, 32, 40, 0.8); border: 1px solid var(--line); border-radius: 20px; padding: 18px; width: 100%; max-width: 360px; }
 .modal-box p { margin: 0 0 16px; font-size: 17px; font-weight: 600; }
 .toast {
-  position: fixed; left: 50%; bottom: calc(96px + var(--safe-bottom) - var(--vp-gap, 0px)); transform: translateX(-50%); z-index: 60;
+  position: fixed; left: 50%; bottom: calc(96px + var(--safe-bottom)); transform: translateX(-50%); z-index: 60;
   background: var(--surface-2); border: 1px solid var(--line); padding: 10px 16px; border-radius: 999px; font-size: 14px;
 }
 
@@ -657,10 +657,9 @@ body::before {
 .progress { height: 4px; }
 
 /* ---------- corrección de viewport (iOS) ---------- */
-.sticky-bottom { bottom: calc(0px - var(--vp-gap, 0px)); }
 
 /* ---------- panel inferior (bottom sheet) ---------- */
-.sheet-wrap { position: fixed; inset: 0 0 calc(0px - var(--vp-gap, 0px)) 0; z-index: 70; }
+.sheet-wrap { position: fixed; inset: 0; z-index: 70; }
 .sheet-backdrop {
   position: absolute; inset: 0; background: rgba(5, 6, 9, 0.5);
   backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
@@ -736,3 +735,34 @@ body.sheet-open .tabbar { opacity: 0; pointer-events: none; }
   .phase .rep-counter span { font-size: 70px; }
   .phase .btn.big { min-height: 52px; }
 }
+
+/* =========================================================
+   MARCO DE LA APP
+   #shell ocupa exactamente la pantalla y es el contenedor de todo lo
+   "fijo" (gracias a transform, position:fixed se ancla a él y no a la
+   ventana). Solo #app hace scroll.
+   ========================================================= */
+html, body { height: 100%; overflow: hidden; }
+.shell {
+  position: fixed; top: 0; left: 0; right: 0;
+  height: var(--app-h, 100%);
+  transform: translateZ(0);
+  overflow: hidden;
+}
+.shell > .topbar { position: absolute; top: 0; left: 0; right: 0; }
+#app {
+  position: absolute; inset: 0;
+  overflow-y: auto; overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  max-width: none; margin: 0;
+  padding: calc(var(--safe-top) + 64px) max(16px, calc((100% - 640px) / 2)) calc(32px + var(--safe-bottom));
+}
+body.is-home #app { padding-top: calc(18px + var(--safe-top)); }
+body.has-tabbar #app { padding-bottom: calc(var(--tabbar-h) + 28px + var(--safe-bottom)); }
+body.sheet-open #app { overflow: hidden; }
+
+/* pantalla de ejercicio: llena el alto y deja el pie anclado abajo */
+body.is-workout #app { display: flex; flex-direction: column; }
+body.is-workout #app > * { flex: none; }
+body.is-workout .workout-foot { margin-top: auto; padding-top: 12px; }
