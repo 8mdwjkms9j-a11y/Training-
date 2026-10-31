@@ -9,6 +9,7 @@ const LS = {
   history: "entreno.history",
   session: "entreno.session",
   prefs: "entreno.prefs",
+  kg: "entreno.kg",
 };
 
 const $app = document.getElementById("app");
@@ -30,10 +31,16 @@ function save(key, value) {
   else localStorage.setItem(key, JSON.stringify(value));
 }
 
-let plan = load(LS.plan, null) || structuredClone(window.DEFAULT_PLAN);
+// Si la pauta del archivo es más nueva que la guardada en el teléfono, usa la del archivo.
+let plan = load(LS.plan, null);
+if (!plan || (plan.version || 0) < (window.DEFAULT_PLAN.version || 0)) {
+  plan = structuredClone(window.DEFAULT_PLAN);
+  save(LS.plan, null);
+}
 let history = load(LS.history, []);
 let session = load(LS.session, null);
-let prefs = Object.assign({ sound: true, voice: true, autoRest: true }, load(LS.prefs, {}));
+let lastKg = load(LS.kg, {});
+let prefs = Object.assign({ sound: true, voice: true, autoRest: true, week: "auto" }, load(LS.prefs, {}));
 
 // ---------- utilidades ----------
 const esc = (s) =>
@@ -52,14 +59,54 @@ function fmt(sec) {
 function fmtDate(ts) {
   return new Date(ts).toLocaleDateString("es", { weekday: "short", day: "numeric", month: "short" });
 }
+function parseDay(s) {
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+function fmtShort(s) {
+  return parseDay(s).toLocaleDateString("es", { day: "numeric", month: "short" });
+}
 
-function exTarget(ex) {
+// ---------- semanas / progresión ----------
+function autoWeekIndex() {
+  const weeks = plan.weeks || [];
+  if (!weeks.length) return -1;
+  const now = new Date();
+  let idx = 0;
+  weeks.forEach((w, i) => {
+    if (parseDay(w.start) <= now) idx = i;
+  });
+  return idx;
+}
+function weekIndex() {
+  const weeks = plan.weeks || [];
+  if (prefs.week !== "auto" && weeks[+prefs.week]) return +prefs.week;
+  return autoWeekIndex();
+}
+function weekSets() {
+  const w = (plan.weeks || [])[weekIndex()];
+  return w ? +w.sets || 1 : 3;
+}
+function setsOf(ex, wk = weekSets()) {
+  if (ex.sets === "auto" || ex.sets === undefined || ex.sets === "") return wk;
+  return Math.max(1, +ex.sets || 1);
+}
+function sessionsThisWeek() {
+  const wi = weekIndex();
+  const w = (plan.weeks || [])[wi];
+  if (!w) return null;
+  const start = parseDay(w.start).getTime();
+  const end = start + 7 * 864e5;
+  return history.filter((h) => h.date >= start && h.date < end).length;
+}
+
+function exTarget(ex, wk) {
   const parts = [];
-  if (ex.sets) parts.push(`${ex.sets} series`);
-  if (ex.time) parts.push(`${ex.time} s`);
-  else if (ex.reps) parts.push(`${ex.reps} reps`);
+  parts.push(`${setsOf(ex, wk)} ${setsOf(ex, wk) === 1 ? "serie" : "series"}`);
+  if (ex.time) parts.push(`${ex.time} s${ex.perSide ? " c/lado" : ""}`);
+  else if (ex.reps) parts.push(`${ex.reps} reps${ex.perSide ? " c/lado" : ""}`);
+  if (ex.rpe) parts.push(`RPE ${ex.rpe}`);
   if (ex.weight) parts.push(ex.weight);
-  if (ex.rest) parts.push(`descanso ${ex.rest} s`);
   return parts.join(" · ");
 }
 
@@ -74,7 +121,8 @@ function videoHtml(ex) {
     const id = youtubeId(url);
     if (id) {
       return `<div class="video"><iframe src="https://www.youtube-nocookie.com/embed/${id}?playsinline=1&rel=0&modestbranding=1"
-        title="${esc(ex.name)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe></div>`;
+        title="${esc(ex.name)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe></div>
+        <a class="small link" href="${esc(url)}" target="_blank" rel="noopener">Abrir en YouTube ↗</a>`;
     }
     if (/\.(mp4|webm|mov|m4v)(\?|$)/i.test(url)) {
       return `<div class="video"><video src="${esc(url)}" controls playsinline loop muted></video></div>`;
@@ -83,6 +131,68 @@ function videoHtml(ex) {
   }
   const q = encodeURIComponent(`${ex.name} ejercicio técnica`);
   return `<a class="btn ghost full" href="https://www.youtube.com/results?search_query=${q}" target="_blank" rel="noopener">🔎 Buscar video en YouTube</a>`;
+}
+
+// ---------- grupos (circuitos / superseries) ----------
+// Devuelve [{start, end, name}] para ejercicios consecutivos con el mismo group+block.
+function groupsOf(day) {
+  const out = [];
+  const exs = day.exercises;
+  let i = 0;
+  while (i < exs.length) {
+    let j = i + 1;
+    if (exs[i].group) {
+      while (j < exs.length && exs[j].group === exs[i].group && exs[j].block === exs[i].block) j++;
+    }
+    out.push({ start: i, end: j, name: j - i > 1 ? exs[i].group : null });
+    i = j;
+  }
+  return out;
+}
+function groupLabel(g) {
+  if (!g.name) return null;
+  const n = g.end - g.start;
+  if (/^[A-Z]$/.test(g.name)) return n === 2 ? `Superserie ${g.name}` : `Circuito ${g.name}`;
+  return g.name;
+}
+
+/*
+  Construye la secuencia de pasos de la sesión.
+  En un grupo: ronda 1 de cada ejercicio, descanso, ronda 2…
+  Ejercicios por tiempo y por lado generan un paso por lado.
+*/
+function buildSteps(day, wk) {
+  const steps = [];
+  for (const g of groupsOf(day)) {
+    const members = day.exercises.slice(g.start, g.end).map((ex, k) => ({ ex, idx: g.start + k }));
+    const rounds = Math.max(...members.map((m) => setsOf(m.ex, wk)));
+    for (let r = 0; r < rounds; r++) {
+      const active = members.filter((m) => r < setsOf(m.ex, wk));
+      active.forEach((m, k) => {
+        const sides = m.ex.perSide && m.ex.time ? 2 : 1;
+        for (let s = 1; s <= sides; s++) {
+          const lastInRound = k === active.length - 1 && s === sides;
+          let rest;
+          if (s < sides) rest = 5; // cambio de lado
+          else if (g.name && !lastInRound) rest = +m.ex.rest || 0; // entre ejercicios del circuito
+          else if (g.name) rest = +active[active.length - 1].ex.rest || 0; // entre rondas
+          else rest = +m.ex.rest || 0;
+          steps.push({
+            ex: m.idx,
+            set: r,
+            nSets: setsOf(m.ex, wk),
+            round: r,
+            rounds,
+            group: groupLabel(g),
+            pos: g.name ? `${g.name.length === 1 ? g.name : ""}${k + 1}` : null,
+            side: sides > 1 ? s : 0,
+            rest,
+          });
+        }
+      });
+    }
+  }
+  return steps;
 }
 
 // ---------- sonido, voz, vibración, pantalla encendida ----------
@@ -155,22 +265,9 @@ function go(view, params = {}) {
 }
 
 $back.addEventListener("click", () => {
-  switch (route.view) {
-    case "day":
-    case "history":
-    case "edit":
-    case "settings":
-      go("home");
-      break;
-    case "workout":
-      go("day", { dayIndex: session ? session.dayIndex : 0 });
-      break;
-    case "summary":
-      go("home");
-      break;
-    default:
-      go("home");
-  }
+  if (route.view === "workout") return go("day", { dayIndex: session ? session.dayIndex : 0 });
+  if (route.view === "rpe" && route.from === "workout") return go("workout");
+  go("home");
 });
 
 function setHeader(title, showBack) {
@@ -184,17 +281,26 @@ function render() {
   updateClock();
   if (session) ticker = setInterval(tick, 250);
 
-  const v = route.view;
-  if (v === "home") return renderHome();
-  if (v === "day") return renderDay();
-  if (v === "workout") return renderWorkout();
-  if (v === "summary") return renderSummary();
-  if (v === "history") return renderHistory();
-  if (v === "edit") return renderEdit();
-  if (v === "settings") return renderSettings();
+  const views = {
+    home: renderHome,
+    day: renderDay,
+    workout: renderWorkout,
+    summary: renderSummary,
+    history: renderHistory,
+    edit: renderEdit,
+    settings: renderSettings,
+    rpe: renderRpe,
+  };
+  (views[route.view] || renderHome)();
 }
 
-// ---------- reloj de sesión ----------
+function bindActs(map) {
+  $app.querySelectorAll("[data-act]").forEach((el) => {
+    const fn = map[el.dataset.act];
+    if (fn) el.addEventListener("click", (e) => fn(e, el));
+  });
+}
+
 function updateClock() {
   if (session) {
     $clock.hidden = false;
@@ -219,13 +325,43 @@ function suggestedDayIndex() {
   return idx === -1 ? 0 : (idx + 1) % plan.days.length;
 }
 
+function weekCardHtml() {
+  const weeks = plan.weeks || [];
+  if (!weeks.length) return "";
+  const wi = weekIndex();
+  const w = weeks[wi];
+  const done = sessionsThisWeek();
+  const freq = plan.frequency || 0;
+  const opts = [`<option value="auto" ${prefs.week === "auto" ? "selected" : ""}>Automático (por fecha)</option>`]
+    .concat(
+      weeks.map(
+        (x, i) =>
+          `<option value="${i}" ${String(prefs.week) === String(i) ? "selected" : ""}>Semana del ${fmtShort(x.start)} · ${x.sets} series</option>`
+      )
+    )
+    .join("");
+  const pips = freq
+    ? Array.from({ length: freq }, (_, i) => `<span class="dot ${i < done ? "done" : ""}"></span>`).join("")
+    : "";
+  return `<div class="card week-card">
+    <div class="row between">
+      <div>
+        <div class="muted small">Semana ${wi + 1} de ${weeks.length} · desde ${fmtShort(w.start)}</div>
+        <div class="card-title">${w.sets} series por entrenamiento</div>
+      </div>
+      ${freq ? `<div class="center"><div class="dots">${pips}</div><div class="muted small">${done}/${freq} esta semana</div></div>` : ""}
+    </div>
+    <select id="weekSel" class="mt">${opts}</select>
+  </div>`;
+}
+
 function renderHome() {
   setHeader(plan.name || "Entreno", false);
   const sug = suggestedDayIndex();
   const resume = session
     ? `<div class="card highlight">
          <div class="card-title">Entrenamiento en curso</div>
-         <div class="muted">${esc(plan.days[session.dayIndex]?.name)}</div>
+         <div class="muted">${esc(plan.days[session.dayIndex]?.name)} · paso ${session.i + 1} de ${session.steps.length}</div>
          <div class="row gap mt">
            <button class="btn primary grow" data-act="resume">Continuar</button>
            <button class="btn ghost" data-act="discard">Descartar</button>
@@ -236,24 +372,36 @@ function renderHome() {
   const days = plan.days
     .map((d, i) => {
       const last = lastDoneFor(d.name);
+      const blocks = [...new Set(d.exercises.map((e) => e.block).filter(Boolean))];
       return `<button class="card day-card" data-day="${i}">
         <div class="row between">
           <div class="card-title">${esc(d.name)}</div>
-          ${i === sug && !session ? `<span class="badge">Te toca</span>` : ""}
+          ${i === sug && !session && plan.days.length > 1 ? `<span class="badge">Te toca</span>` : ""}
         </div>
-        <div class="muted">${d.exercises.length} ejercicios${last ? ` · último: ${fmtDate(last)}` : ""}</div>
+        <div class="muted">${blocks.length ? esc(blocks.join(" · ")) + " · " : ""}${d.exercises.length} ejercicios</div>
+        ${last ? `<div class="muted small">Último: ${fmtDate(last)}</div>` : ""}
       </button>`;
     })
     .join("");
 
   $app.innerHTML = `
     ${resume}
-    <div class="list">${days || `<p class="muted">Tu pauta no tiene días. Edítala abajo.</p>`}</div>
-    <div class="grid3 mt">
+    ${weekCardHtml()}
+    <div class="list mt">${days || `<p class="muted">Tu pauta no tiene días. Edítala abajo.</p>`}</div>
+    <div class="grid2 mt">
       <button class="btn ghost" data-act="history">📈 Historial</button>
+      <button class="btn ghost" data-act="rpe">🎯 Tabla RPE</button>
       <button class="btn ghost" data-act="edit">✏️ Pauta</button>
       <button class="btn ghost" data-act="settings">⚙️ Ajustes</button>
     </div>`;
+
+  const sel = document.getElementById("weekSel");
+  if (sel)
+    sel.addEventListener("change", () => {
+      prefs.week = sel.value;
+      save(LS.prefs, prefs);
+      render();
+    });
 
   $app.querySelectorAll("[data-day]").forEach((b) =>
     b.addEventListener("click", () => go("day", { dayIndex: +b.dataset.day }))
@@ -269,15 +417,9 @@ function renderHome() {
       }
     },
     history: () => go("history"),
+    rpe: () => go("rpe", { from: "home" }),
     edit: () => go("edit"),
     settings: () => go("settings"),
-  });
-}
-
-function bindActs(map) {
-  $app.querySelectorAll("[data-act]").forEach((el) => {
-    const fn = map[el.dataset.act];
-    if (fn) el.addEventListener("click", (e) => fn(e, el));
   });
 }
 
@@ -288,27 +430,51 @@ function renderDay() {
   const day = plan.days[route.dayIndex];
   if (!day) return go("home");
   setHeader(day.name, true);
+  const wk = weekSets();
 
-  const items = day.exercises
-    .map(
-      (ex, i) => `
-      <details class="card ex-card">
-        <summary>
-          <span class="num">${i + 1}</span>
-          <span class="grow">
-            <span class="card-title">${esc(ex.name)}</span>
-            <span class="muted block">${esc(exTarget(ex))}</span>
-          </span>
-        </summary>
-        <div class="ex-body" data-video="${i}"></div>
-        ${ex.notes ? `<p class="notes">${esc(ex.notes)}</p>` : ""}
-      </details>`
-    )
-    .join("");
+  let html = "";
+  let lastBlock = null;
+  for (const g of groupsOf(day)) {
+    const first = day.exercises[g.start];
+    if (first.block && first.block !== lastBlock) {
+      html += `<h3 class="block-title">${esc(first.block)}</h3>`;
+      lastBlock = first.block;
+    }
+    const label = groupLabel(g);
+    const members = day.exercises.slice(g.start, g.end);
+    const rounds = Math.max(...members.map((e) => setsOf(e, wk)));
+    const items = members
+      .map((ex, k) => {
+        const i = g.start + k;
+        const tag = g.name ? (g.name.length === 1 ? `${g.name}${k + 1}` : k + 1) : i + 1;
+        return `
+        <details class="ex-card ${g.name ? "in-group" : "card"}">
+          <summary>
+            <span class="num">${esc(tag)}</span>
+            <span class="grow">
+              <span class="card-title">${esc(ex.name)}</span>
+              <span class="muted block small">${esc(exTarget(ex, wk))}</span>
+            </span>
+          </summary>
+          <div class="ex-body" data-video="${i}"></div>
+          ${ex.notes ? `<p class="notes">${esc(ex.notes)}</p>` : ""}
+        </details>`;
+      })
+      .join("");
+    if (label) {
+      const restR = +members[members.length - 1].rest || 0;
+      html += `<div class="card group-card">
+        <div class="group-head row between"><b>${esc(label)}</b><span class="muted small">${rounds} ${rounds === 1 ? "ronda" : "rondas"}${restR ? ` · descanso ${restR} s` : ""}</span></div>
+        ${items}
+      </div>`;
+    } else {
+      html += items;
+    }
+  }
 
   const otherSession = session && session.dayIndex !== route.dayIndex;
   $app.innerHTML = `
-    <div class="list">${items}</div>
+    <div class="list">${html}</div>
     <div class="sticky-bottom">
       ${
         session && !otherSession
@@ -318,10 +484,10 @@ function renderDay() {
     </div>`;
 
   // Carga el video solo al abrir el ejercicio (más liviano)
-  $app.querySelectorAll("details.ex-card").forEach((d, i) => {
+  $app.querySelectorAll("details.ex-card").forEach((d) => {
     d.addEventListener("toggle", () => {
       const box = d.querySelector("[data-video]");
-      if (d.open && !box.innerHTML) box.innerHTML = videoHtml(day.exercises[i]);
+      if (d.open && !box.innerHTML) box.innerHTML = videoHtml(day.exercises[+box.dataset.video]);
     });
   });
 
@@ -339,47 +505,41 @@ function renderDay() {
 // ============================================================
 /*
   session = {
-    dayIndex, exIndex, setIndex, startedAt,
+    dayIndex, steps, i, startedAt, week,
     phase: "work" | "rest",
-    reps,                 // contador de la serie actual
-    timer: { running, endsAt, remaining, startedAt }  // serie por tiempo / descanso
-    setStartedAt,         // para cronometrar series por repeticiones
-    log: [ [ {reps|time, at} ... ] por ejercicio ]
+    reps, timer, setStartedAt,
+    log: { [exIndex]: [ {set, side, reps, time, kg, at} ] }
   }
 */
 function startSession(dayIndex) {
   unlockAudio();
   const day = plan.days[dayIndex];
+  const steps = buildSteps(day, weekSets());
+  if (!steps.length) return alert("Este día no tiene ejercicios.");
   session = {
     dayIndex,
-    exIndex: 0,
-    setIndex: 0,
+    steps,
+    i: 0,
+    week: weekIndex(),
     startedAt: Date.now(),
     phase: "work",
     reps: 0,
     timer: null,
     setStartedAt: Date.now(),
-    log: day.exercises.map(() => []),
+    log: {},
   };
   persist();
   keepAwake(true);
-  say(`Empezamos. ${day.exercises[0]?.name || ""}`);
+  say(`Empezamos. ${day.exercises[steps[0].ex].name}`);
   go("workout");
 }
 
 function persist() {
   save(LS.session, session);
 }
-
-function curDay() {
-  return plan.days[session.dayIndex];
-}
-function curEx() {
-  return curDay().exercises[session.exIndex];
-}
-function totalSets(ex) {
-  return Math.max(1, +ex.sets || 1);
-}
+const curDay = () => plan.days[session.dayIndex];
+const curStep = () => session.steps[session.i];
+const curEx = () => curDay().exercises[curStep().ex];
 
 // --- temporizador basado en hora real (sigue funcionando si se bloquea la pantalla)
 function timerStart(seconds) {
@@ -428,47 +588,42 @@ function tick() {
 }
 
 function onTimerDone() {
-  const ex = curEx();
   if (session.phase === "work") {
-    // serie por tiempo completada
     beep(990, 0.25, 2);
     buzz([200, 100, 200]);
-    logSet({ time: ex.time });
+    logSet({ time: curEx().time });
   } else {
-    // fin del descanso
     beep(990, 0.3, 2);
     buzz([300, 100, 300]);
-    say("¡Vamos!");
+    say(curStep().side === 2 ? "Otro lado" : "¡Vamos!");
     beginWork();
   }
 }
 
 function logSet(entry) {
-  session.log[session.exIndex].push({ ...entry, at: Date.now() });
-  const ex = curEx();
-  const lastSet = session.setIndex + 1 >= totalSets(ex);
-  const lastEx = session.exIndex + 1 >= curDay().exercises.length;
+  const st = curStep();
+  (session.log[st.ex] = session.log[st.ex] || []).push({ ...entry, set: st.set, side: st.side, at: Date.now() });
 
-  if (lastSet && lastEx) {
+  if (session.i + 1 >= session.steps.length) {
     persist();
     return finishSession();
   }
 
-  if (lastSet) {
-    session.exIndex++;
-    session.setIndex = 0;
-  } else {
-    session.setIndex++;
-  }
+  const rest = st.rest;
+  session.i++;
+  const next = curStep();
+  const nextEx = curEx();
 
-  const rest = +ex.rest || 0;
   if (rest > 0 && prefs.autoRest) {
     session.phase = "rest";
     session.reps = 0;
     timerStart(rest);
-    const next = curEx();
-    say(lastSet ? `Descanso. Luego, ${next.name}` : "Descanso");
+    if (next.side === 2) say("Cambia de lado");
+    else if (next.ex !== st.ex) say(`Descanso. Luego, ${nextEx.name}`);
+    else say("Descanso");
   } else {
+    if (next.ex !== st.ex) say(nextEx.name);
+    else if (next.side === 2) say("Otro lado");
     beginWork();
   }
   persist();
@@ -484,11 +639,18 @@ function beginWork() {
   render();
 }
 
-function jumpTo(exIndex) {
-  const n = curDay().exercises.length;
-  if (exIndex < 0 || exIndex >= n) return;
-  session.exIndex = exIndex;
-  session.setIndex = Math.min(session.log[exIndex].length, totalSets(curEx()) - 1);
+function jumpStep(delta) {
+  // salta al primer paso de otro ejercicio en la dirección indicada
+  let j = session.i;
+  const cur = curStep().ex;
+  if (delta > 0) {
+    while (j < session.steps.length - 1 && session.steps[j].ex === cur) j++;
+    if (session.steps[j].ex === cur) return;
+  } else {
+    j--;
+    if (j < 0) return;
+  }
+  session.i = j;
   beginWork();
 }
 
@@ -497,6 +659,7 @@ function finishSession() {
   const entry = {
     date: Date.now(),
     dayName: day.name,
+    week: session.week,
     duration: Math.round((Date.now() - session.startedAt) / 1000),
     exercises: day.exercises.map((ex, i) => ({ name: ex.name, sets: session.log[i] || [] })),
   };
@@ -510,32 +673,54 @@ function finishSession() {
   go("summary", { entry: history.length - 1 });
 }
 
+function sideLabel(st) {
+  return st.side === 1 ? " · lado 1" : st.side === 2 ? " · lado 2" : "";
+}
+
 function renderWorkout() {
-  if (!session) return go("home");
+  if (!session || !session.steps) return go("home");
   const day = curDay();
+  const st = curStep();
   const ex = curEx();
   if (!ex) return go("home");
   setHeader(day.name, true);
   keepAwake(true);
 
-  const nSets = totalSets(ex);
   const isRest = session.phase === "rest";
   const isTimed = !!ex.time;
-  const nEx = day.exercises.length;
+  const total = session.steps.length;
 
-  const setDots = Array.from({ length: nSets }, (_, i) => {
-    const done = i < session.log[session.exIndex].length;
-    const cur = i === session.setIndex && !isRest;
-    return `<span class="dot ${done ? "done" : ""} ${cur ? "cur" : ""}"></span>`;
+  // puntos de series del ejercicio actual
+  const doneSets = new Set((session.log[st.ex] || []).filter((l) => l.side !== 1).map((l) => l.set));
+  const setDots = Array.from({ length: st.nSets }, (_, i) => {
+    const cur = i === st.set && !isRest;
+    return `<span class="dot ${doneSets.has(i) ? "done" : ""} ${cur ? "cur" : ""}"></span>`;
   }).join("");
+
+  // otros ejercicios del circuito/superserie
+  let groupBar = "";
+  if (st.group) {
+    const members = [...new Set(session.steps.filter((s) => s.group === st.group && s.rounds === st.rounds).map((s) => s.ex))];
+    groupBar = `<div class="group-bar">
+      <div class="small muted">${esc(st.group)} · ronda ${st.round + 1} de ${st.rounds}</div>
+      <div class="chips">${members
+        .map((m) => `<span class="chip ${m === st.ex ? "on" : ""}">${esc(day.exercises[m].name)}</span>`)
+        .join("")}</div>
+    </div>`;
+  }
+
+  const setLabel = st.group
+    ? `${st.pos ? st.pos + " · " : ""}RONDA ${st.round + 1} DE ${st.rounds}`
+    : `SERIE ${st.set + 1} DE ${st.nSets}`;
 
   let main;
   if (isRest) {
+    const sideSwitch = st.side === 2;
     main = `
       <div class="phase rest">
-        <div class="phase-label">DESCANSO</div>
+        <div class="phase-label">${sideSwitch ? "CAMBIA DE LADO" : "DESCANSO"}</div>
         <div class="ring" id="ring"><div class="ring-num" id="bigTime">${fmt(timerLeft())}</div></div>
-        <div class="muted center">A continuación: <b>${esc(ex.name)}</b> · serie ${session.setIndex + 1}/${nSets}</div>
+        <div class="muted center">A continuación: <b>${esc(ex.name)}</b>${sideLabel(st)}<br>${setLabel.toLowerCase()}</div>
         <div class="row gap mt">
           <button class="btn ghost grow" data-act="minus15">−15 s</button>
           <button class="btn ghost grow" data-act="pause">${session.timer?.running ? "⏸ Pausa" : "▶ Seguir"}</button>
@@ -548,23 +733,25 @@ function renderWorkout() {
     const started = !!t;
     main = `
       <div class="phase work">
-        <div class="phase-label">SERIE ${session.setIndex + 1} DE ${nSets} · ${ex.time} s</div>
+        <div class="phase-label">${setLabel} · ${ex.time} s${sideLabel(st).toUpperCase()}</div>
         <div class="ring" id="ring"><div class="ring-num" id="bigTime">${fmt(started ? timerLeft() : ex.time)}</div></div>
         ${
           !started
             ? `<button class="btn primary full big" data-act="startTimed">▶ Iniciar</button>`
             : `<div class="row gap">
                  <button class="btn ghost grow" data-act="pause">${t.running ? "⏸ Pausa" : "▶ Seguir"}</button>
-                 <button class="btn ghost grow" data-act="resetTimed">↺ Reiniciar</button>
+                 <button class="btn ghost grow" data-act="plus15">+15 s</button>
+                 <button class="btn ghost grow" data-act="resetTimed">↺</button>
                </div>
-               <button class="btn primary full big mt" data-act="doneTimed">✓ Serie lista</button>`
+               <button class="btn primary full big mt" data-act="doneTimed">✓ Listo</button>`
         }
       </div>`;
   } else {
     const target = +ex.reps || 0;
+    const kg = lastKg[ex.name] ?? "";
     main = `
       <div class="phase work">
-        <div class="phase-label">SERIE ${session.setIndex + 1} DE ${nSets}${target ? ` · objetivo ${target} reps` : ""}</div>
+        <div class="phase-label">${setLabel}${target ? ` · ${target} REPS${ex.perSide ? " C/LADO" : ""}` : ""}</div>
         <button class="rep-counter" data-act="repPlus" aria-label="Sumar repetición">
           <span id="repNum">${session.reps}</span>
           <small>${target ? `/ ${target}` : "reps"}</small>
@@ -575,18 +762,28 @@ function renderWorkout() {
           <div class="set-clock grow center" id="setClock">⏱ ${fmt((Date.now() - session.setStartedAt) / 1000)}</div>
           <button class="btn ghost grow" data-act="repPlus">+1</button>
         </div>
+        ${
+          ex.rpe
+            ? `<label class="kg-row mt"><span>Peso usado</span>
+                 <input id="kgInput" type="number" inputmode="decimal" step="0.5" min="0" placeholder="—" value="${esc(kg)}"><span>kg</span></label>`
+            : ""
+        }
         <button class="btn primary full big mt" data-act="doneReps">✓ Serie lista</button>
       </div>`;
   }
 
   $app.innerHTML = `
-    <div class="progress"><div style="width:${(session.exIndex / nEx) * 100}%"></div></div>
+    <div class="progress"><div style="width:${(session.i / total) * 100}%"></div></div>
     <div class="row between muted small mt">
-      <span>Ejercicio ${session.exIndex + 1} de ${nEx}</span>
+      <span>${ex.block ? esc(ex.block) + " · " : ""}paso ${session.i + 1} de ${total}</span>
       <span class="dots">${setDots}</span>
     </div>
+    ${groupBar}
     <h2 class="ex-name">${esc(ex.name)}</h2>
-    <div class="muted">${esc(exTarget(ex))}</div>
+    <div class="row gap wrap">
+      <span class="muted">${esc(exTarget(ex, weekSets()).replace(/ · RPE.*$/, ""))}</span>
+      ${ex.rpe ? `<button class="rpe-chip" data-act="rpe">RPE ${esc(ex.rpe)} ⓘ</button>` : ""}
+    </div>
     ${ex.notes ? `<p class="notes">${esc(ex.notes)}</p>` : ""}
     <details class="video-box" ${isRest ? "" : "open"}>
       <summary>🎬 Video</summary>
@@ -594,13 +791,12 @@ function renderWorkout() {
     </details>
     ${main}
     <div class="row gap mt">
-      <button class="btn ghost grow" data-act="prevEx" ${session.exIndex === 0 ? "disabled" : ""}>‹ Anterior</button>
-      <button class="btn ghost grow" data-act="nextEx" ${session.exIndex >= nEx - 1 ? "disabled" : ""}>Siguiente ›</button>
+      <button class="btn ghost grow" data-act="prevEx" ${session.i === 0 ? "disabled" : ""}>‹ Anterior</button>
+      <button class="btn ghost grow" data-act="nextEx" ${session.i >= total - 1 ? "disabled" : ""}>Saltar ›</button>
     </div>
     <button class="btn danger-ghost full mt" data-act="finish">Terminar entrenamiento</button>
   `;
 
-  // video: cargar solo si el desplegable está abierto
   const vb = $app.querySelector(".video-box");
   const loadVideo = () => {
     const slot = vb.querySelector(".video-slot");
@@ -626,7 +822,14 @@ function renderWorkout() {
       paintLive();
     },
     doneReps: () => {
-      logSet({ reps: session.reps || +ex.reps || 0, time: Math.round((Date.now() - session.setStartedAt) / 1000) });
+      const entry = { reps: session.reps || +ex.reps || 0, time: Math.round((Date.now() - session.setStartedAt) / 1000) };
+      const kgIn = document.getElementById("kgInput");
+      if (kgIn && kgIn.value !== "") {
+        entry.kg = +kgIn.value;
+        lastKg[ex.name] = entry.kg;
+        save(LS.kg, lastKg);
+      }
+      logSet(entry);
     },
     startTimed: () => {
       unlockAudio();
@@ -646,26 +849,27 @@ function renderWorkout() {
     },
     doneTimed: () => {
       const t = session.timer;
-      const done = t ? Math.round(t.total - timerLeft()) : +ex.time;
-      logSet({ time: done });
+      logSet({ time: t ? Math.round(t.total - timerLeft()) : +ex.time });
     },
-    minus15: () => adjustRest(-15),
-    plus15: () => adjustRest(15),
+    minus15: () => adjustTimer(-15),
+    plus15: () => adjustTimer(15),
     skipRest: () => beginWork(),
-    prevEx: () => jumpTo(session.exIndex - 1),
-    nextEx: () => jumpTo(session.exIndex + 1),
+    prevEx: () => jumpStep(-1),
+    nextEx: () => jumpStep(1),
+    rpe: () => go("rpe", { from: "workout" }),
     finish: () => {
       if (confirm("¿Terminar y guardar el entrenamiento?")) finishSession();
     },
   });
 }
 
-function adjustRest(delta) {
+function adjustTimer(delta) {
   const t = session.timer;
   if (!t) return;
   if (t.running) t.endsAt = Math.max(Date.now(), t.endsAt + delta * 1000);
   else t.remaining = Math.max(0, t.remaining + delta);
   t.total = Math.max(t.total + delta, 1);
+  t.lastBeep = null;
   persist();
   paintLive();
 }
@@ -689,21 +893,50 @@ function paintLive() {
 }
 
 // ============================================================
+//  RPE
+// ============================================================
+function renderRpe() {
+  setHeader("Tabla RPE", true);
+  const rows = (plan.rpe || [])
+    .map(([r, d]) => `<div class="row between hist-row"><b class="rpe-n">${esc(r)}</b><span class="grow">${esc(d)}</span></div>`)
+    .join("");
+  $app.innerHTML = `
+    <div class="card">
+      <div class="card-title">Percepción de esfuerzo</div>
+      <p class="muted small">RIR = repeticiones en reserva (cuántas más podrías haber hecho).</p>
+      ${rows}
+    </div>
+    ${route.from === "workout" ? `<button class="btn primary full big mt" data-act="back">Volver al ejercicio</button>` : ""}`;
+  bindActs({ back: () => go("workout") });
+}
+
+// ============================================================
 //  RESUMEN E HISTORIAL
 // ============================================================
+function fmtSet(s) {
+  let out = s.reps ? `${s.reps}` : `${s.time}s`;
+  if (s.kg) out += `×${s.kg}kg`;
+  return out;
+}
+
 function entryHtml(e) {
   const rows = e.exercises
+    .filter((x) => x.sets.length)
     .map((x) => {
-      const sets = x.sets.length
-        ? x.sets.map((s) => (s.reps ? `${s.reps}` : `${s.time}s`)).join(" · ")
-        : `<span class="muted">—</span>`;
-      return `<div class="row between hist-row"><span>${esc(x.name)}</span><span>${sets}</span></div>`;
+      // une lados de un mismo set
+      const bySet = [];
+      x.sets.forEach((s) => {
+        if (s.side === 2 && bySet.length) bySet[bySet.length - 1] += "/" + fmtSet(s);
+        else bySet.push(fmtSet(s));
+      });
+      return `<div class="row between hist-row"><span>${esc(x.name)}</span><span>${bySet.join(" · ")}</span></div>`;
     })
     .join("");
+  const wk = e.week != null && plan.weeks?.[e.week] ? ` · semana ${e.week + 1}` : "";
   return `<div class="card">
     <div class="row between"><div class="card-title">${esc(e.dayName)}</div><span class="muted">${fmtDate(e.date)}</span></div>
-    <div class="muted small">Duración ${fmt(e.duration)}</div>
-    <div class="mt">${rows}</div>
+    <div class="muted small">Duración ${fmt(e.duration)}${wk}</div>
+    <div class="mt">${rows || `<span class="muted small">Sin series registradas</span>`}</div>
   </div>`;
 }
 
@@ -745,9 +978,10 @@ function renderHistory() {
 function renderEdit() {
   setHeader("Editar pauta", true);
   $app.innerHTML = `
-    <p class="muted small">Edita tu pauta en formato JSON. Cada ejercicio puede tener:
-      <code>name</code>, <code>sets</code>, <code>reps</code> o <code>time</code> (segundos),
-      <code>rest</code> (segundos), <code>weight</code>, <code>video</code> (link YouTube) y <code>notes</code>.</p>
+    <p class="muted small">Edita tu pauta en formato JSON. Campos por ejercicio:
+      <code>name</code>, <code>block</code>, <code>group</code>, <code>sets</code> (número o <code>"auto"</code>),
+      <code>reps</code> o <code>time</code>, <code>perSide</code>, <code>rest</code>, <code>rpe</code>,
+      <code>video</code> y <code>notes</code>. Ver detalles en <code>plan.js</code>.</p>
     <textarea id="planText" spellcheck="false" autocapitalize="off" autocorrect="off">${esc(JSON.stringify(plan, null, 2))}</textarea>
     <div id="planErr" class="error" hidden></div>
     <button class="btn primary full big mt" data-act="savePlan">Guardar</button>
@@ -797,6 +1031,9 @@ function validatePlan(p) {
       if (!ex.name) throw new Error(`ejercicio ${j + 1} de "${d.name}" sin "name"`);
     });
   });
+  (p.weeks || []).forEach((w, i) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(w.start || "")) throw new Error(`semana ${i + 1}: "start" debe ser AAAA-MM-DD`);
+  });
 }
 
 // ============================================================
@@ -836,7 +1073,7 @@ function renderSettings() {
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
   navigator.serviceWorker.register("sw.js").catch(() => {});
 }
-if (session && !plan.days[session.dayIndex]) {
+if (session && (!session.steps || !plan.days[session.dayIndex])) {
   session = null;
   save(LS.session, null);
 }

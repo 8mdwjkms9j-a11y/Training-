@@ -150,3 +150,37 @@ code { background: var(--card2); padding: 1px 5px; border-radius: 5px; font-size
 .error { color: var(--danger); margin-top: 8px; font-size: 14px; }
 .toggle { display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
 .toggle input { width: 22px; height: 22px; accent-color: var(--accent); }
+
+/* ---- bloques, circuitos, semanas, RPE ---- */
+.wrap { flex-wrap: wrap; }
+.link { color: var(--accent); display: inline-block; margin-top: 6px; text-decoration: none; }
+.block-title { margin: 14px 2px 0; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+.list > .block-title:first-child { margin-top: 0; }
+.ex-card.card summary { padding: 0; }
+.group-card { padding: 10px 12px; }
+.group-head { padding: 2px 4px 8px; border-bottom: 1px solid #2a333e; }
+.in-group { padding: 10px 4px; border-bottom: 1px solid #252d37; }
+.in-group:last-child { border-bottom: 0; }
+
+.week-card select, select {
+  width: 100%; background: var(--card2); color: var(--text); border: 1px solid #2f3946;
+  border-radius: 10px; padding: 10px; font: inherit; font-size: 15px;
+}
+.week-card .dots { justify-content: center; margin-bottom: 4px; }
+
+.group-bar { margin-top: 10px; background: var(--card); border: 1px solid #252d37; border-radius: 12px; padding: 8px 10px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.chip { font-size: 12px; padding: 4px 9px; border-radius: 999px; background: var(--card2); color: var(--muted); }
+.chip.on { background: var(--accent); color: var(--accent-ink); font-weight: 700; }
+
+.rpe-chip {
+  border: 1px solid #f5a524; color: #f5a524; background: rgba(245, 165, 36, .1);
+  border-radius: 999px; padding: 3px 10px; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.rpe-n { width: 48px; color: #f5a524; }
+
+.kg-row { display: flex; align-items: center; gap: 10px; justify-content: center; color: var(--muted); }
+.kg-row input {
+  width: 90px; text-align: center; font: inherit; font-size: 20px; font-weight: 700; padding: 8px;
+  background: var(--card2); color: var(--text); border: 1px solid #2f3946; border-radius: 10px;
+}

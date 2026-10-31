@@ -11,7 +11,12 @@ Web app para seguir tu pauta de entrenamiento desde el celular (Safari / acceso 
 - **Historial** de entrenamientos con reps/tiempos por serie.
 - Funciona sin conexión una vez abierta.
 
-## Cargar tu pauta
+## Pauta cargada: Noviembre 2026
+- **Día 1** = Activación → Movilidad → Fuerza (superseries A, B y circuito C), 2 veces por semana.
+- Series por entrenamiento según la semana (2 · 3 · 3 · 2), elegidas automáticamente por fecha.
+- Tabla RPE/RIR disponible en la app; en ejercicios con RPE se puede anotar el peso usado.
+
+## Editar la pauta
 Edita `plan.js` (o en la app: **✏️ Pauta**). Cada ejercicio admite:
 
 | campo | ejemplo | significado |
@@ -24,6 +29,12 @@ Edita `plan.js` (o en la app: **✏️ Pauta**). Cada ejercicio admite:
 | `weight` | `"20 kg"` | carga |
 | `video` | `"https://youtu.be/..."` | link del video |
 | `notes` | `"Por pierna"` | indicaciones |
+| `block` | `"Movilidad"` | sección del día |
+| `group` | `"A"` | ejercicios seguidos con el mismo grupo se hacen en superserie/circuito |
+| `perSide` | `true` | por lado (en ejercicios por tiempo cronometra ambos lados) |
+| `rpe` | `"8"` | esfuerzo objetivo |
+
+`sets: "auto"` usa las series de la semana definidas en `weeks`. Si cambias `plan.js`, sube `version` para que el teléfono tome la nueva pauta.
 
 ## Usarla en el iPhone
 1. Publica el repo con **GitHub Pages**: *Settings → Pages → Deploy from a branch →* elige la rama y carpeta `/ (root)`.
