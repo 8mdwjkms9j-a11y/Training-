@@ -24,12 +24,22 @@ document.documentElement.classList.toggle("standalone", STANDALONE);
 // exactamente la pantalla, así el menú y todo lo "fijo abajo" queda anclado al borde
 // aunque iOS calcule mal el alto (app en inicio, rebote, teclado).
 const $shell = document.getElementById("shell");
+const safeTopProbe = document.createElement("div");
+safeTopProbe.style.cssText = "position:absolute;visibility:hidden;pointer-events:none;height:env(safe-area-inset-top)";
+document.documentElement.appendChild(safeTopProbe);
+let viewportInfo = "";
 function setAppHeight() {
   const portrait = window.matchMedia("(orientation: portrait)").matches;
-  // En la app de inicio la vista ocupa toda la pantalla: screen.height es la medida fiable
-  // (iOS a veces informa innerHeight más corto y la app se ve cortada abajo).
-  const h = STANDALONE && portrait ? Math.max(screen.height, window.innerHeight) : window.innerHeight;
+  const ih = window.innerHeight;
+  const sh = screen.height;
+  const safeTop = safeTopProbe.offsetHeight || 0;
+  // iOS (app abierta desde el ícono, barra de estado translúcida) a veces informa un alto
+  // más corto que la pantalla: justo le falta la barra de estado. Si eso es lo que falta
+  // (o sabemos que es la app de inicio), usamos el alto real de la pantalla.
+  const missingStatusBar = portrait && ih < sh && ih + safeTop >= sh - 16;
+  const h = portrait && (STANDALONE || missingStatusBar) ? Math.max(sh, ih) : ih;
   document.documentElement.style.setProperty("--app-h", h + "px");
+  viewportInfo = `${sh}/${ih}+${safeTop}→${h}${STANDALONE ? " app" : ""}`;
 }
 setAppHeight();
 window.addEventListener("pageshow", setAppHeight);
@@ -546,8 +556,15 @@ function renderNow(state, changed) {
     rpe: renderRpe,
     share: renderShare,
   };
+  const prevView = renderNow.lastView;
+  renderNow.lastView = route.view;
   (views[route.view] || renderHome)();
   renderTabbar();
+  if (prevView !== route.view) {
+    $app.classList.remove("view-enter");
+    void $app.offsetWidth;
+    $app.classList.add("view-enter");
+  }
   if (changed) $app.querySelector(".phase")?.classList.add("morph");
   updateNowPlaying(true);
 }
@@ -1293,13 +1310,13 @@ function renderWorkout() {
   let center, caption = "", tools = "", primary = "";
   if (isRest) {
     const kind = session.restKind || (st.side === 2 ? "side" : "rest");
-    center = `<div class="ring" id="ring"><div class="ring-num" id="bigTime">${fmt(timerLeft())}</div></div>`;
+    center = ringHtml();
     caption = kind === "side" ? `Ahora el otro lado` : `Sigue: <b>${esc(ex.name)}</b> · ${setTxt.toLowerCase()}`;
     tools = `${ib("minus15", "minus15", "Restar 15 segundos")}${ib("pause", session.timer?.running ? "pause" : "play", session.timer?.running ? "Pausar" : "Seguir")}${ib("plus15", "plus15", "Sumar 15 segundos")}`;
     primary = `<button class="btn primary full big" data-act="skipRest">${kind === "prep" ? "Estoy listo" : kind === "side" ? "Listo, sigo" : "Saltar descanso"}</button>`;
   } else if (isTimed) {
     const t = session.timer;
-    center = `<div class="ring" id="ring"><div class="ring-num" id="bigTime">${fmt(t ? timerLeft() : ex.time)}</div></div>`;
+    center = t ? ringHtml() : `<div class="ring" id="ring" style="--p:0"><div class="ring-num" id="bigTime">${fmt(ex.time)}</div></div>`;
     caption = st.side ? `Lado ${st.side} de 2` : `de ${ex.time} s`;
     if (t) {
       tools = `${ib("pause", t.running ? "pause" : "play", t.running ? "Pausar" : "Seguir")}${ib("plus15", "plus15", "Sumar 15 segundos")}${ib("resetTimed", "reset", "Reiniciar")}`;
@@ -1447,8 +1464,14 @@ function renderWorkout() {
       const t = session.timer;
       logSet({ time: t ? Math.round(t.total - timerLeft()) : +ex.time });
     },
-    minus15: () => adjustTimer(-15),
-    plus15: () => adjustTimer(15),
+    minus15: () => {
+      adjustTimer(-15);
+      render();
+    },
+    plus15: () => {
+      adjustTimer(15);
+      render();
+    },
     skipRest: () => beginWork(true),
     prevEx: () => jumpStep(-1),
     nextEx: () => jumpStep(1),
@@ -1474,6 +1497,16 @@ function metroStatusText(ex) {
   return sides > 1 ? `Lado ${m.side} de ${sides}` : prefs.metroEvery ? "Sigue el pitido" : "Sigue el conteo";
 }
 
+// El anillo avanza con una animación CSS lineal hasta el final del tiempo:
+// fluido a 60 fps y se detiene/reanuda con el temporizador.
+function ringHtml() {
+  const t = session.timer;
+  const left = timerLeft();
+  const p0 = t && t.total ? Math.min(100, Math.max(0, (1 - left / t.total) * 100)) : 0;
+  const anim = t && t.running ? ` anim" style="--p0:${p0.toFixed(2)};--p:${p0.toFixed(2)};--dur:${left.toFixed(2)}s` : `" style="--p:${p0.toFixed(2)}`;
+  return `<div class="ring${anim}" id="ring"><div class="ring-num" id="bigTime">${fmt(left)}</div></div>`;
+}
+
 function adjustTimer(delta) {
   const t = session.timer;
   if (!t) return;
@@ -1494,7 +1527,7 @@ function paintLive() {
   if (big && session.timer) {
     const left = timerLeft();
     big.textContent = fmt(left);
-    if (ring) {
+    if (ring && !ring.classList.contains("anim")) {
       const pct = session.timer.total ? (1 - left / session.timer.total) * 100 : 0;
       ring.style.setProperty("--p", pct.toFixed(1));
     }
@@ -2116,7 +2149,7 @@ function renderSettings() {
     <section class="section">
       <div class="section-head"><h2>App</h2></div>
       <button class="row-link" data-act="update"><span><b>Actualizar app</b><small>Descarga la última versión sin borrar el acceso directo ni tu historial</small></span>${icon("refresh")}</button>
-      <p class="muted small">Pantalla ${screen.height}/${window.innerHeight}${STANDALONE ? " · app" : " · navegador"} · Versión ${DEV_BUILD ? "de desarrollo" : esc(APP_VERSION.slice(0, 7))}${latestVersion && latestVersion !== APP_VERSION ? " · hay una versión nueva" : ""}</p>
+      <p class="muted small">Pantalla ${viewportInfo} · Versión ${DEV_BUILD ? "de desarrollo" : esc(APP_VERSION.slice(0, 7))}${latestVersion && latestVersion !== APP_VERSION ? " · hay una versión nueva" : ""}</p>
     </section>
     <section class="section">
       <div class="section-head"><h2>Pauta</h2></div>
