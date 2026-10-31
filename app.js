@@ -146,7 +146,7 @@ function videoHtml(ex) {
     return `<a class="btn ghost full" href="${esc(url)}" target="_blank" rel="noopener">▶ Ver video${id ? " en YouTube" : ""}</a>`;
   }
   const q = encodeURIComponent(`${ex.name} ejercicio técnica`);
-  return `<a class="btn ghost full" href="https://www.youtube.com/results?search_query=${q}" target="_blank" rel="noopener">🔎 Buscar video en YouTube</a>`;
+  return `<a class="btn ghost full" href="https://www.youtube.com/results?search_query=${q}" target="_blank" rel="noopener">Buscar video en YouTube</a>`;
 }
 
 // ---------- diálogos propios (confirm/alert no funcionan en todas partes) ----------
@@ -308,12 +308,14 @@ function go(view, params = {}) {
 $back.addEventListener("click", () => {
   if (route.view === "workout") return go("day", { dayIndex: session ? session.dayIndex : 0 });
   if (route.view === "rpe" && route.from === "workout") return go("workout");
+  if (route.view === "edit") return go("settings");
   go("home");
 });
 
 function setHeader(title, showBack) {
   $title.textContent = title;
-  $back.hidden = !showBack;
+  const tabView = ["history", "settings"].includes(route.view) || (route.view === "rpe" && route.from !== "workout");
+  $back.hidden = !showBack || tabView;
 }
 
 function render() {
@@ -333,6 +335,7 @@ function render() {
     rpe: renderRpe,
   };
   (views[route.view] || renderHome)();
+  renderTabbar();
 }
 
 function bindActs(map) {
@@ -366,91 +369,162 @@ function suggestedDayIndex() {
   return idx === -1 ? 0 : (idx + 1) % plan.days.length;
 }
 
-function weekCardHtml() {
+// ---------- íconos (trazo simple) ----------
+const ICON = {
+  home: '<path d="M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3z"/>',
+  history: '<path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 5-6"/>',
+  gauge: '<path d="M12 14l4-4"/><path d="M3.3 17a9 9 0 1 1 17.4 0"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  play: '<path d="M7 4.5v15l13-7.5z" fill="currentColor" stroke="none"/>',
+  list: '<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  chevron: '<path d="m9 6 6 6-6 6"/>',
+};
+const icon = (n, cls = "") =>
+  `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[n]}</svg>`;
+
+// Minutos aproximados de un día (trabajo + descansos + transiciones)
+function estimateMin(day, wk) {
+  let sec = 0;
+  for (const st of buildSteps(day, wk)) {
+    const ex = day.exercises[st.ex];
+    sec += ex.time ? +ex.time : (+ex.reps || 10) * 3 * (ex.perSide ? 2 : 1);
+    sec += st.rest + 15;
+  }
+  return Math.max(5, Math.round(sec / 60 / 5) * 5);
+}
+
+function weekStripHtml() {
   const weeks = plan.weeks || [];
   if (!weeks.length) return "";
   const wi = weekIndex();
-  const w = weeks[wi];
-  const done = sessionsThisWeek();
+  const auto = autoWeekIndex();
   const freq = plan.frequency || 0;
-  const opts = [`<option value="auto" ${prefs.week === "auto" ? "selected" : ""}>Automático (por fecha)</option>`]
-    .concat(
-      weeks.map(
-        (x, i) =>
-          `<option value="${i}" ${String(prefs.week) === String(i) ? "selected" : ""}>Semana del ${fmtShort(x.start)} · ${x.sets} series</option>`
-      )
-    )
+  const cells = weeks
+    .map((w, i) => {
+      const start = parseDay(w.start).getTime();
+      const n = history.filter((h) => h.date >= start && h.date < start + 7 * 864e5).length;
+      const state = i === wi ? "on" : i < auto ? "past" : "";
+      const pips = freq
+        ? `<span class="pips">${Array.from({ length: freq }, (_, k) => `<i class="${k < n ? "done" : ""}"></i>`).join("")}</span>`
+        : "";
+      return `<button class="wk ${state}" data-week="${i}" aria-pressed="${i === wi}">
+        <span class="wk-label">Sem ${i + 1}</span>
+        <span class="wk-num">${w.sets}</span>
+        <span class="wk-unit">series</span>
+        ${pips}
+        <span class="wk-date">${fmtShort(w.start)}</span>
+      </button>`;
+    })
     .join("");
-  const pips = freq
-    ? Array.from({ length: freq }, (_, i) => `<span class="dot ${i < done ? "done" : ""}"></span>`).join("")
-    : "";
-  return `<div class="card week-card">
-    <div class="row between">
-      <div>
-        <div class="muted small">Semana ${wi + 1} de ${weeks.length} · desde ${fmtShort(w.start)}</div>
-        <div class="card-title">${w.sets} series por entrenamiento</div>
-      </div>
-      ${freq ? `<div class="center"><div class="dots">${pips}</div><div class="muted small">${done}/${freq} esta semana</div></div>` : ""}
+  const manual = prefs.week !== "auto" && +prefs.week !== auto;
+  return `<section class="section">
+    <div class="section-head">
+      <h2>Progresión</h2>
+      ${manual ? `<button class="text-btn" data-act="weekAuto">Volver a la semana actual</button>` : `<span class="muted small">Toca una semana para cambiarla</span>`}
     </div>
-    <select id="weekSel" class="mt">${opts}</select>
-  </div>`;
+    <div class="weeks">${cells}</div>
+  </section>`;
 }
 
 function renderHome() {
   setHeader(plan.name || "Entreno", false);
-  const sug = suggestedDayIndex();
-  const resume = session
-    ? `<div class="card highlight">
-         <div class="card-title">Entrenamiento en curso</div>
-         <div class="muted">${esc(plan.days[session.dayIndex]?.name)} · paso ${session.i + 1} de ${session.steps.length}</div>
-         <div class="row gap mt">
-           <button class="btn primary grow" data-act="resume">Continuar</button>
-           <button class="btn ghost" data-act="discard">Descartar</button>
-         </div>
-       </div>`
+  const di = session ? session.dayIndex : suggestedDayIndex();
+  const day = plan.days[di];
+  const weeks = plan.weeks || [];
+  const wi = weekIndex();
+  const wk = weekSets();
+  const done = sessionsThisWeek();
+  const freq = plan.frequency || 0;
+  const today = new Date().toLocaleDateString("es", { weekday: "long", day: "numeric", month: "long" });
+
+  let hero = "";
+  if (day) {
+    const blocks = [];
+    day.exercises.forEach((e) => {
+      const b = e.block || "Ejercicios";
+      const last = blocks[blocks.length - 1];
+      if (last && last.name === b) last.n++;
+      else blocks.push({ name: b, n: 1 });
+    });
+    const eyebrow = session
+      ? "Entrenamiento en curso"
+      : weeks.length
+      ? `Semana ${wi + 1} de ${weeks.length}${freq ? ` · sesión ${Math.min((done || 0) + 1, freq)} de ${freq}` : ""}`
+      : "Siguiente entrenamiento";
+    const pct = session ? Math.round((session.i / session.steps.length) * 100) : 0;
+    hero = `<section class="hero ${session ? "is-live" : ""}">
+      <div class="eyebrow">${esc(eyebrow)}</div>
+      <h1 class="hero-title">${esc(day.name)}</h1>
+      <div class="hero-meta">
+        <span><b>${wk}</b> series</span>
+        <span><b>${day.exercises.length}</b> ejercicios</span>
+        <span>${icon("clock")} <b>~${estimateMin(day, wk)}</b> min</span>
+      </div>
+      <ol class="blocks">${blocks
+        .map((b) => `<li><span>${esc(b.name)}</span><small>${b.n}</small></li>`)
+        .join("")}</ol>
+      ${
+        session
+          ? `<div class="live-progress"><div style="width:${pct}%"></div></div>
+             <div class="hero-sub">Paso ${session.i + 1} de ${session.steps.length} · ${fmt((Date.now() - session.startedAt) / 1000)} transcurrido</div>
+             <button class="btn primary xl" data-act="resume">${icon("play")} Continuar</button>
+             <button class="text-btn danger" data-act="discard">Descartar entrenamiento</button>`
+          : `<button class="btn primary xl" data-act="start">${icon("play")} Empezar</button>
+             <button class="text-btn" data-act="preview">${icon("list")} Ver ejercicios del día</button>`
+      }
+    </section>`;
+  }
+
+  const otherDays =
+    plan.days.length > 1
+      ? `<section class="section"><div class="section-head"><h2>Otros días</h2></div><div class="list">${plan.days
+          .map((d, i) =>
+            i === di
+              ? ""
+              : `<button class="row-link" data-day="${i}"><span><b>${esc(d.name)}</b><small>${d.exercises.length} ejercicios</small></span>${icon("chevron")}</button>`
+          )
+          .join("")}</div></section>`
+      : "";
+
+  const lastEntry = history[history.length - 1];
+  const last = lastEntry
+    ? `<section class="section"><div class="section-head"><h2>Último entrenamiento</h2><button class="text-btn" data-act="history">Ver historial</button></div>
+        <div class="last"><span><b>${esc(lastEntry.dayName)}</b><small>${fmtDate(lastEntry.date)}</small></span><span class="last-dur">${fmt(lastEntry.duration)}</span></div></section>`
     : "";
 
-  const days = plan.days
-    .map((d, i) => {
-      const last = lastDoneFor(d.name);
-      const blocks = [...new Set(d.exercises.map((e) => e.block).filter(Boolean))];
-      return `<button class="card day-card" data-day="${i}">
-        <div class="row between">
-          <div class="card-title">${esc(d.name)}</div>
-          ${i === sug && !session && plan.days.length > 1 ? `<span class="badge">Te toca</span>` : ""}
-        </div>
-        <div class="muted">${blocks.length ? esc(blocks.join(" · ")) + " · " : ""}${d.exercises.length} ejercicios</div>
-        ${last ? `<div class="muted small">Último: ${fmtDate(last)}</div>` : ""}
-      </button>`;
-    })
-    .join("");
-
   $app.innerHTML = `
-    ${resume}
-    ${weekCardHtml()}
-    <div class="list mt">${days || `<p class="muted">Tu pauta no tiene días. Edítala abajo.</p>`}</div>
-    <div class="grid2 mt">
-      <button class="btn ghost" data-act="history">📈 Historial</button>
-      <button class="btn ghost" data-act="rpe">🎯 Tabla RPE</button>
-      <button class="btn ghost" data-act="edit">✏️ Pauta</button>
-      <button class="btn ghost" data-act="settings">⚙️ Ajustes</button>
-    </div>`;
+    <header class="home-head">
+      <div class="eyebrow">${esc(today)}</div>
+      <div class="home-title">${esc(plan.name || "Entreno")}</div>
+    </header>
+    ${hero || `<p class="muted">Tu pauta no tiene días. Edítala en Ajustes.</p>`}
+    ${weekStripHtml()}
+    ${otherDays}
+    ${last}`;
 
-  const sel = document.getElementById("weekSel");
-  if (sel)
-    sel.addEventListener("change", () => {
-      prefs.week = sel.value;
+  $app.querySelectorAll("[data-week]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const i = +b.dataset.week;
+      prefs.week = i === autoWeekIndex() ? "auto" : String(i);
       save(LS.prefs, prefs);
       render();
-    });
-
+    })
+  );
   $app.querySelectorAll("[data-day]").forEach((b) =>
     b.addEventListener("click", () => go("day", { dayIndex: +b.dataset.day }))
   );
   bindActs({
+    start: () => startSession(di),
+    preview: () => go("day", { dayIndex: di }),
     resume: () => go("workout"),
+    weekAuto: () => {
+      prefs.week = "auto";
+      save(LS.prefs, prefs);
+      render();
+    },
     discard: async () => {
-      if (await ask("¿Descartar el entrenamiento en curso?")) {
+      if (await ask("¿Descartar el entrenamiento en curso?", "Descartar")) {
         session = null;
         save(LS.session, null);
         keepAwake(false);
@@ -458,10 +532,32 @@ function renderHome() {
       }
     },
     history: () => go("history"),
-    rpe: () => go("rpe", { from: "home" }),
-    edit: () => go("edit"),
-    settings: () => go("settings"),
   });
+}
+
+// ---------- barra inferior ----------
+const TABS = [
+  ["home", "home", "Inicio"],
+  ["history", "history", "Historial"],
+  ["rpe", "gauge", "RPE"],
+  ["settings", "settings", "Ajustes"],
+];
+const $tabbar = document.createElement("nav");
+$tabbar.className = "tabbar";
+$tabbar.setAttribute("aria-label", "Secciones");
+document.body.appendChild($tabbar);
+function renderTabbar() {
+  const v = route.view;
+  const show = ["home", "history", "rpe", "settings"].includes(v) && !(v === "rpe" && route.from === "workout");
+  document.body.classList.toggle("has-tabbar", show);
+  document.body.classList.toggle("is-home", v === "home");
+  $tabbar.hidden = !show;
+  if (!show) return;
+  $tabbar.innerHTML = TABS.map(
+    ([view, ic, label]) =>
+      `<button data-tab="${view}" class="${v === view ? "on" : ""}" ${v === view ? 'aria-current="page"' : ""}>${icon(ic)}<span>${label}</span></button>`
+  ).join("");
+  $tabbar.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => go(b.dataset.tab, { from: "tab" })));
 }
 
 // ============================================================
@@ -827,7 +923,7 @@ function renderWorkout() {
     </div>
     ${ex.notes ? `<p class="notes">${esc(ex.notes)}</p>` : ""}
     <details class="video-box" ${isRest ? "" : "open"}>
-      <summary>🎬 Video</summary>
+      <summary>Video</summary>
       <div class="video-slot"></div>
     </details>
     ${main}
@@ -983,9 +1079,9 @@ function entryHtml(e) {
 
 function renderSummary() {
   const e = history[route.entry];
-  setHeader("¡Listo! 💪", true);
+  setHeader("Resumen", true);
   $app.innerHTML = `
-    <div class="center big-emoji">🏆</div>
+    <div class="done-hero"><div class="eyebrow">Entrenamiento completado</div><div class="done-title">Buen trabajo</div></div>
     ${e ? entryHtml(e) : ""}
     <button class="btn primary full big mt" data-act="home">Volver al inicio</button>`;
   bindActs({ home: () => go("home") });
@@ -1083,18 +1179,25 @@ function validatePlan(p) {
 function renderSettings() {
   setHeader("Ajustes", true);
   const opt = (key, label) => `
-    <label class="card toggle">
+    <label class="toggle" for="pref-${key}">
       <span>${label}</span>
-      <input type="checkbox" data-pref="${key}" ${prefs[key] ? "checked" : ""}>
+      <input type="checkbox" id="pref-${key}" data-pref="${key}" ${prefs[key] ? "checked" : ""}>
     </label>`;
   $app.innerHTML = `
-    <div class="list">
-      ${opt("sound", "🔔 Sonidos (pitidos)")}
-      ${opt("voice", "🗣️ Avisos por voz")}
-      ${opt("autoRest", "⏳ Iniciar descanso automáticamente")}
-    </div>
-    <button class="btn ghost full mt" data-act="test">Probar sonido</button>
-    <p class="muted small mt">Consejo: en iPhone, si no escuchas los pitidos revisa que el interruptor de silencio esté desactivado.</p>`;
+    <section class="section first">
+      <div class="section-head"><h2>Avisos</h2></div>
+      <div class="group">
+        ${opt("sound", "Sonidos (pitidos)")}
+        ${opt("voice", "Avisos por voz")}
+        ${opt("autoRest", "Iniciar descanso automáticamente")}
+      </div>
+      <button class="btn ghost full mt" data-act="test">Probar sonido</button>
+      <p class="muted small">En iPhone, si no escuchas los pitidos, revisa que el interruptor de silencio esté desactivado.</p>
+    </section>
+    <section class="section">
+      <div class="section-head"><h2>Pauta</h2></div>
+      <button class="row-link" data-act="edit"><span><b>Editar pauta</b><small>${esc(plan.name || "")} · ${plan.days.length} ${plan.days.length === 1 ? "día" : "días"}</small></span>${icon("chevron")}</button>
+    </section>`;
   $app.querySelectorAll("[data-pref]").forEach((c) =>
     c.addEventListener("change", () => {
       prefs[c.dataset.pref] = c.checked;
@@ -1102,6 +1205,7 @@ function renderSettings() {
     })
   );
   bindActs({
+    edit: () => go("edit"),
     test: () => {
       unlockAudio();
       beep(880, 0.15, 2);
