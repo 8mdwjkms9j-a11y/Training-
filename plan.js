@@ -23,7 +23,7 @@
 // ============================================================
 
 window.DEFAULT_PLAN = {
-  version: 2,
+  version: 3,
   name: "Pauta Noviembre",
   frequency: 2, // entrenamientos por semana
   weeks: [
@@ -94,23 +94,23 @@ window.DEFAULT_PLAN = {
         {
           block: "Movilidad", group: "Movilidad",
           name: "Pancake suelo", sets: "auto", reps: 6, rest: 0,
-          video: "https://www.youtube.com/watch?v=UYsvnlpSLdw", start: ""
+          video: "https://www.youtube.com/watch?v=UYsvnlpSLdw", start: "3:06"
         },
         {
           block: "Movilidad", group: "Movilidad",
           name: "Posición rana", sets: "auto", time: 60, rest: 0,
-          video: "https://www.youtube.com/watch?v=UYsvnlpSLdw", start: "",
+          video: "https://www.youtube.com/watch?v=UYsvnlpSLdw", start: "1:15",
           notes: "60–90 segundos. Si quieres llegar a 90 s, usa +15 s o sigue después del pitido."
         },
         {
           block: "Movilidad", group: "Movilidad",
           name: "Pancake pared", sets: "auto", reps: 6, rest: 0,
-          video: "https://www.youtube.com/watch?v=UYsvnlpSLdw", start: ""
+          video: "https://www.youtube.com/watch?v=UYsvnlpSLdw", start: "3:06"
         },
         {
           block: "Movilidad", group: "Movilidad",
           name: "Leg lift pancake", sets: "auto", reps: 6, rest: 45,
-          video: "https://www.youtube.com/watch?v=UYsvnlpSLdw", start: ""
+          video: "https://www.youtube.com/watch?v=UYsvnlpSLdw", start: "6:47"
         },
 
         // ---------------- FUERZA · DÍA 1 ----------------
