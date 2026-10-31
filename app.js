@@ -406,7 +406,23 @@ function currentState() {
   if (route.view === "summary") return "done";
   if (route.view !== "workout" || !session) return "idle";
   if (session.phase === "rest") return session.restKind || (curStep().side === 2 ? "side" : "rest");
+  if (session.metro?.switchUntil) return "side";
   return "work";
+}
+// Actualiza el estado sin redibujar (p. ej. cambio de lado dentro del conteo)
+function syncState() {
+  const s = currentState();
+  if (s === lastState) return;
+  document.documentElement.dataset.state = s;
+  lastState = s;
+  const t = document.getElementById("stateTxt");
+  if (t) t.textContent = STATE_LABEL[s] || "";
+  const ph = $app.querySelector(".phase");
+  if (ph) {
+    ph.classList.remove("morph");
+    void ph.offsetWidth;
+    ph.classList.add("morph");
+  }
 }
 const STATE_LABEL = { work: "En ejercicio", prep: "Prepárate", side: "Cambia de lado", rest: "Descanso", done: "Completado" };
 
@@ -489,6 +505,11 @@ const ICON = {
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   chevron: '<path d="m9 6 6 6-6 6"/>',
   refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>',
+  pause: '<path d="M8 5v14M16 5v14"/>',
+  reset: '<path d="M4 12a8 8 0 1 0 2.3-5.7"/><path d="M4 4v5h5"/>',
+  minus: '<path d="M6 12h12"/>',
+  minus15: '<path d="M3 12h5"/><text x="9.5" y="16" font-size="10" font-weight="700" fill="currentColor" stroke="none" font-family="sans-serif">15</text>',
+  plus15: '<path d="M3 12h5M5.5 9.5v5"/><text x="9.5" y="16" font-size="10" font-weight="700" fill="currentColor" stroke="none" font-family="sans-serif">15</text>',
 };
 const icon = (n, cls = "") =>
   `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[n]}</svg>`;
@@ -1112,136 +1133,113 @@ function renderWorkout() {
     return `<span class="dot ${doneSets.has(i) ? "done" : ""} ${cur ? "cur" : ""}"></span>`;
   }).join("");
 
-  // otros ejercicios del circuito/superserie
-  let groupBar = "";
+  // ---- contexto: dónde estoy y qué viene ----
+  const state = currentState();
+  const nEx = day.exercises.length;
+  let context = ex.block ? esc(ex.block) : "";
   if (st.group) {
     const members = [...new Set(session.steps.filter((s) => s.group === st.group && s.rounds === st.rounds).map((s) => s.ex))];
-    groupBar = `<div class="group-bar">
-      <div class="small muted">${esc(st.group)} · ronda ${st.round + 1} de ${st.rounds}</div>
-      <div class="chips">${members
-        .map((m) => `<span class="chip ${m === st.ex ? "on" : ""}">${esc(day.exercises[m].name)}</span>`)
-        .join("")}</div>
-    </div>`;
+    context += `${context ? " · " : ""}${esc(st.group)} · ${members.indexOf(st.ex) + 1} de ${members.length}`;
+  } else {
+    context += `${context ? " · " : ""}ejercicio ${st.ex + 1} de ${nEx}`;
   }
+  const setTxt = st.group && st.rounds > 1 ? `Ronda ${st.round + 1}/${st.rounds}` : `Serie ${st.set + 1}/${st.nSets}`;
+  const nextStep = session.steps.slice(session.i + 1).find((s) => s.ex !== st.ex);
+  const nextEx = nextStep ? day.exercises[nextStep.ex] : null;
+  const target = ex.time ? `${ex.time} s${ex.perSide ? " c/lado" : ""}` : ex.reps ? `${ex.reps} reps${ex.perSide ? " c/lado" : ""}` : "";
 
-  const setLabel = st.group
-    ? `${st.pos ? st.pos + " · " : ""}RONDA ${st.round + 1} DE ${st.rounds}`
-    : `SERIE ${st.set + 1} DE ${st.nSets}`;
+  const tempoCtl = () => `<div class="tempo-ctl" aria-label="Ritmo">
+      <button data-act="tempoMinus" aria-label="Más rápido">−</button>
+      <span><b>${tempoOf(ex).toFixed(1).replace(".0", "")}s</b> /rep</span>
+      <button data-act="tempoPlus" aria-label="Más lento">+</button>
+    </div>`;
+  const ib = (act, ic, label, extra = "") => `<button class="ibtn" data-act="${act}" aria-label="${label}" ${extra}>${icon(ic)}</button>`;
 
-  let main;
+  let center, caption = "", tools = "", primary = "";
   if (isRest) {
     const kind = session.restKind || (st.side === 2 ? "side" : "rest");
-    const label = kind === "prep" ? "PREPÁRATE" : kind === "side" ? "CAMBIA DE LADO" : "DESCANSO";
-    main = `
-      <div class="phase rest ${kind === "prep" ? "prep" : ""}">
-        <div class="phase-label">${label}</div>
-        <div class="ring" id="ring"><div class="ring-num" id="bigTime">${fmt(timerLeft())}</div></div>
-        <div class="muted center">A continuación: <b>${esc(ex.name)}</b>${sideLabel(st)}<br>${setLabel.toLowerCase()}</div>
-        <div class="row gap mt">
-          <button class="btn ghost grow" data-act="minus15">−15 s</button>
-          <button class="btn ghost grow" data-act="pause">${session.timer?.running ? "⏸ Pausa" : "▶ Seguir"}</button>
-          <button class="btn ghost grow" data-act="plus15">+15 s</button>
-        </div>
-        <button class="btn primary full big mt" data-act="skipRest">${kind === "prep" ? "Estoy listo" : "Saltar descanso"}</button>
-      </div>`;
+    center = `<div class="ring" id="ring"><div class="ring-num" id="bigTime">${fmt(timerLeft())}</div></div>`;
+    caption = kind === "side" ? `Ahora el otro lado` : `Sigue: <b>${esc(ex.name)}</b> · ${setTxt.toLowerCase()}`;
+    tools = `${ib("minus15", "minus15", "Restar 15 segundos")}${ib("pause", session.timer?.running ? "pause" : "play", session.timer?.running ? "Pausar" : "Seguir")}${ib("plus15", "plus15", "Sumar 15 segundos")}`;
+    primary = `<button class="btn primary full big" data-act="skipRest">${kind === "prep" ? "Estoy listo" : kind === "side" ? "Listo, sigo" : "Saltar descanso"}</button>`;
   } else if (isTimed) {
     const t = session.timer;
-    const started = !!t;
-    main = `
-      <div class="phase work">
-        <div class="phase-label">${setLabel} · ${ex.time} s${sideLabel(st).toUpperCase()}</div>
-        <div class="ring" id="ring"><div class="ring-num" id="bigTime">${fmt(started ? timerLeft() : ex.time)}</div></div>
-        ${
-          !started
-            ? `<button class="btn primary full big" data-act="startTimed">▶ Iniciar</button>`
-            : `<div class="row gap">
-                 <button class="btn ghost grow" data-act="pause">${t.running ? "⏸ Pausa" : "▶ Seguir"}</button>
-                 <button class="btn ghost grow" data-act="plus15">+15 s</button>
-                 <button class="btn ghost grow" data-act="resetTimed">↺</button>
-               </div>
-               <button class="btn primary full big mt" data-act="doneTimed">✓ Listo</button>`
-        }
-      </div>`;
+    center = `<div class="ring" id="ring"><div class="ring-num" id="bigTime">${fmt(t ? timerLeft() : ex.time)}</div></div>`;
+    caption = st.side ? `Lado ${st.side} de 2` : `de ${ex.time} s`;
+    if (t) {
+      tools = `${ib("pause", t.running ? "pause" : "play", t.running ? "Pausar" : "Seguir")}${ib("plus15", "plus15", "Sumar 15 segundos")}${ib("resetTimed", "reset", "Reiniciar")}`;
+      primary = `<button class="btn primary full big" data-act="doneTimed">Listo</button>`;
+    } else primary = `<button class="btn primary full big" data-act="startTimed">${icon("play")} Iniciar</button>`;
   } else if (hasMetro(ex)) {
-    const target = +ex.reps;
     const m = session.metro;
-    main = `
-      <div class="phase work">
-        <div class="phase-label">${setLabel} · ${target} REPS${ex.perSide ? " C/LADO" : ""}</div>
-        <button class="rep-counter ${m ? "metro-on" : ""}" id="repBtn" data-act="${m ? "metroToggle" : "repPlus"}" aria-label="${m ? "Pausar metrónomo" : "Sumar repetición"}">
-          <span id="repNum">${session.reps}</span>
-          <small>/ ${target}</small>
-          <em id="metroStatus">${m ? metroStatusText(ex) : "toca para contar"}</em>
-        </button>
-        <div class="tempo-row">
-          <button class="btn ghost" data-act="tempoMinus" aria-label="Más rápido">−</button>
-          <div class="tempo-val"><b>${tempoOf(ex).toFixed(1).replace(".0", "")} s</b><small>por repetición</small></div>
-          <button class="btn ghost" data-act="tempoPlus" aria-label="Más lento">+</button>
-        </div>
-        ${
-          !m
-            ? `<button class="btn primary full big mt" data-act="metroStart">${icon("play")} Iniciar conteo</button>
-               <button class="text-btn full-w" data-act="doneReps">Marcar serie lista</button>`
-            : `<div class="row gap mt">
-                 <button class="btn ghost grow" data-act="metroToggle" id="metroPauseBtn">${m.running ? "Pausa" : "Seguir"}</button>
-                 <button class="btn ghost grow" data-act="metroReset">Reiniciar</button>
-               </div>
-               <button class="btn primary full big mt" data-act="doneReps">Serie lista</button>`
-        }
-      </div>`;
+    center = `<button class="rep-counter ${m && m.running ? "metro-on" : ""}" id="repBtn" data-act="${m ? "metroToggle" : "repPlus"}" aria-label="${m ? "Pausar o seguir" : "Sumar repetición"}">
+        <span id="repNum">${session.reps}</span><small>/ ${ex.reps}</small></button>`;
+    caption = `<span id="metroStatus">${m ? metroStatusText(ex) : "Toca el círculo para contar a mano"}</span>`;
+    tools = m
+      ? `${ib("metroToggle", m.running ? "pause" : "play", m.running ? "Pausar" : "Seguir")}${ib("metroReset", "reset", "Reiniciar")}${tempoCtl()}`
+      : tempoCtl();
+    primary = m
+      ? `<button class="btn primary full big" data-act="doneReps">Serie lista</button>`
+      : `<button class="btn primary full big" data-act="metroStart">${icon("play")} Iniciar conteo</button>`;
   } else {
-    const target = +ex.reps || 0;
     const kg = lastKg[ex.name] ?? "";
-    main = `
-      <div class="phase work">
-        <div class="phase-label">${setLabel}${target ? ` · ${target} REPS${ex.perSide ? " C/LADO" : ""}` : ""}</div>
-        <button class="rep-counter" data-act="repPlus" aria-label="Sumar repetición">
-          <span id="repNum">${session.reps}</span>
-          <small>${target ? `/ ${target}` : "reps"}</small>
-          <em>toca para contar</em>
-        </button>
-        <div class="row gap">
-          <button class="btn ghost grow" data-act="repMinus">−1</button>
-          <div class="set-clock grow center" id="setClock">⏱ ${fmt((Date.now() - session.setStartedAt) / 1000)}</div>
-          <button class="btn ghost grow" data-act="repPlus">+1</button>
-        </div>
-        ${
-          ex.rpe
-            ? `<label class="kg-row mt"><span>Peso usado</span>
-                 <input id="kgInput" type="number" inputmode="decimal" step="0.5" min="0" placeholder="—" value="${esc(kg)}"><span>kg</span></label>`
-            : ""
-        }
-        <button class="btn primary full big mt" data-act="doneReps">✓ Serie lista</button>
-      </div>`;
+    center = `<button class="rep-counter" id="repBtn" data-act="repPlus" aria-label="Sumar repetición">
+        <span id="repNum">${session.reps}</span><small>${ex.reps ? `/ ${ex.reps}` : "reps"}</small></button>`;
+    caption = `Toca el círculo en cada repetición · <span id="setClock">${fmt((Date.now() - session.setStartedAt) / 1000)}</span>`;
+    tools = `${ib("repMinus", "minus", "Restar una repetición")}${
+      ex.rpe
+        ? `<label class="kg-ctl" for="kgInput"><input id="kgInput" type="number" inputmode="decimal" step="0.5" min="0" placeholder="—" value="${esc(kg)}"><span>kg</span></label>`
+        : ""
+    }`;
+    primary = `<button class="btn primary full big" data-act="doneReps">Serie lista</button>`;
   }
 
+  const setDotsHtml = st.nSets > 1 ? `<span class="dots">${setDots}</span>` : "";
+  const techOpen = state === "prep";
+  const hasTech = ex.notes || ex.video !== undefined || true;
+
   $app.innerHTML = `
-    <div class="progress"><div style="width:${(session.i / total) * 100}%"></div></div>
-    <div class="row between muted small mt">
-      <span>${ex.block ? esc(ex.block) + " · " : ""}paso ${session.i + 1} de ${total}</span>
-      <span class="dots">${setDots}</span>
-    </div>
-    <div class="state-pill" role="status"><i></i>${STATE_LABEL[currentState()] || ""}</div>
-    ${groupBar}
+    <div class="progress" aria-hidden="true"><div style="width:${(session.i / total) * 100}%"></div></div>
+    <div class="context">${context}</div>
     <h2 class="ex-name">${esc(ex.name)}</h2>
-    <div class="row gap wrap">
-      <span class="muted">${esc(exTarget(ex, weekSets()).replace(/ · RPE.*$/, ""))}</span>
-      ${ex.rpe ? `<button class="rpe-chip" data-act="rpe">RPE ${esc(ex.rpe)} ⓘ</button>` : ""}
+    <div class="ex-meta">
+      ${target ? `<span>${esc(target)}</span>` : ""}
+      ${ex.rpe ? `<button class="rpe-chip" data-act="rpe" aria-label="Ver tabla RPE">RPE ${esc(ex.rpe)}</button>` : ""}
     </div>
-    ${main}
-    ${ex.notes ? `<p class="notes">${esc(ex.notes)}</p>` : ""}
-    <details class="video-box" ${isRest || session.metro || session.timer ? "" : "open"}>
-      <summary>Video</summary>
-      <div class="video-slot"></div>
-    </details>
-    <div class="row gap mt">
-      <button class="btn ghost grow" data-act="prevEx" ${session.i === 0 ? "disabled" : ""}>‹ Anterior</button>
-      <button class="btn ghost grow" data-act="nextEx" ${session.i >= total - 1 ? "disabled" : ""}>Saltar ›</button>
-    </div>
-    <button class="btn danger-ghost full mt" data-act="finish">Terminar entrenamiento</button>
+
+    <section class="phase">
+      <header class="phase-head">
+        <div class="state-pill" role="status"><i></i><span id="stateTxt">${STATE_LABEL[state] || ""}</span></div>
+        <div class="set-info">${setTxt}${setDotsHtml}</div>
+      </header>
+      <div class="phase-center">${center}</div>
+      <p class="phase-caption">${caption}</p>
+      ${tools ? `<div class="tools">${tools}</div>` : ""}
+      ${primary}
+      ${
+        nextEx && !isRest
+          ? `<footer class="phase-next"><span>Sigue</span><b>${esc(nextEx.name)}</b></footer>`
+          : ""
+      }
+    </section>
+
+    ${
+      hasTech
+        ? `<details class="video-box tech" ${techOpen ? "open" : ""}>
+             <summary><span>Técnica</span><small>${ex.notes ? "notas y video" : "video"}</small></summary>
+             ${ex.notes ? `<p class="notes">${esc(ex.notes)}</p>` : ""}
+             <div class="video-slot"></div>
+           </details>`
+        : ""
+    }
+
+    <nav class="workout-foot" aria-label="Navegación del entrenamiento">
+      <button class="text-btn" data-act="prevEx" ${session.i === 0 ? "disabled" : ""}>‹ Anterior</button>
+      <button class="text-btn" data-act="nextEx" ${session.i >= total - 1 ? "disabled" : ""}>Saltar ejercicio ›</button>
+      <button class="text-btn danger" data-act="finish">Terminar</button>
+    </nav>
   `;
 
-  $app.querySelector(".chip.on")?.scrollIntoView({ inline: "center", block: "nearest" });
   window.scrollTo(0, 0);
   const vb = $app.querySelector(".video-box");
   const loadVideo = () => {
@@ -1344,13 +1342,13 @@ function metroStatusText(ex) {
   if (!m) return "";
   if (m.switchUntil) {
     const left = Math.max(0, Math.ceil(((m.running ? m.switchUntil - Date.now() : m.switchLeft)) / 1000));
-    return `cambia de lado · ${left}`;
+    return `Cambia de lado · ${left}`;
   }
-  if (!m.running) return "en pausa · toca para seguir";
+  if (!m.running) return "En pausa · toca el círculo para seguir";
   const sides = metroSides(ex);
-  if (ex.alternate) return m.lastBeat % 2 === 0 ? "lado 1" : "lado 2";
-  if (Date.now() < m.t0) return "prepárate…";
-  return sides > 1 ? `lado ${m.side} de ${sides}` : prefs.metroEvery ? "sigue el pitido" : "sigue el conteo";
+  if (ex.alternate) return m.lastBeat % 2 === 0 ? "Lado 1" : "Lado 2";
+  if (Date.now() < m.t0) return "Prepárate…";
+  return sides > 1 ? `Lado ${m.side} de ${sides}` : prefs.metroEvery ? "Sigue el pitido" : "Sigue el conteo";
 }
 
 function adjustTimer(delta) {
@@ -1366,6 +1364,7 @@ function adjustTimer(delta) {
 
 // Actualiza solo los números (no recrea el video)
 function paintLive() {
+  if (route.view === "workout" && session) syncState();
   const big = document.getElementById("bigTime");
   const ring = document.getElementById("ring");
   if (big && session.timer) {
@@ -1381,7 +1380,7 @@ function paintLive() {
   const ms = document.getElementById("metroStatus");
   if (ms && session.metro) ms.textContent = metroStatusText(curEx());
   const sc = document.getElementById("setClock");
-  if (sc) sc.textContent = "⏱ " + fmt((Date.now() - session.setStartedAt) / 1000);
+  if (sc) sc.textContent = fmt((Date.now() - session.setStartedAt) / 1000);
 }
 
 // ============================================================
@@ -1438,6 +1437,7 @@ function fmtDur(sec) {
 const SHARE_W = 1080, SHARE_H = 1920;
 const F_DISPLAY = '"Barlow Condensed", "Arial Narrow", sans-serif';
 const F_BODY = 'Manrope, -apple-system, "Helvetica Neue", sans-serif';
+const F_SERIF = '"Instrument Serif", "Times New Roman", Georgia, serif';
 
 function spaced(ctx, text, x, y, spacing) {
   // texto con espaciado entre letras, centrado en x
@@ -1544,8 +1544,25 @@ function subtitle(e) {
 const SHARE_TEMPLATES = [
   { id: "anillo", name: "Anillo", transparent: true },
   { id: "editorial", name: "Editorial", transparent: true },
-  { id: "tarjeta", name: "Tarjeta", transparent: false },
+  { id: "tarjeta", name: "Tarjeta", transparent: true },
 ];
+
+// Escribe trozos de texto con distintos estilos en una misma línea, centrada o desde x
+function richLine(ctx, parts, x, y, align = "center") {
+  const widths = parts.map(([t, font]) => {
+    ctx.font = font;
+    return ctx.measureText(t).width;
+  });
+  const total = widths.reduce((a, b) => a + b, 0);
+  let cx = align === "center" ? x - total / 2 : align === "right" ? x - total : x;
+  ctx.textAlign = "left";
+  parts.forEach(([t, font, color], i) => {
+    ctx.font = font;
+    ctx.fillStyle = color || INK;
+    ctx.fillText(t, cx, y);
+    cx += widths[i];
+  });
+}
 
 function drawShare(canvas, tpl, e) {
   canvas.width = SHARE_W;
@@ -1554,100 +1571,167 @@ function drawShare(canvas, tpl, e) {
   const st = entryStats(e);
   const planned = plannedSets(e);
   const frac = planned ? st.sets / planned : 1;
-  const W = SHARE_W, H = SHARE_H, cx = W / 2;
-  ctx.clearRect(0, 0, W, H);
+  const W = SHARE_W, cx = W / 2, cy = SHARE_H / 2;
+  ctx.clearRect(0, 0, W, SHARE_H);
   const mm = Math.floor(st.dur / 60), ss = String(st.dur % 60).padStart(2, "0");
   const timeTxt = mm >= 60 ? `${Math.floor(mm / 60)}:${String(mm % 60).padStart(2, "0")}:${ss}` : `${mm}:${ss}`;
+  const dateTxt = new Date(e.date).toLocaleDateString("es", { weekday: "long", day: "numeric", month: "long" });
+  const weekTxt = e.week != null && plan.weeks?.[e.week] ? `Semana ${e.week + 1}` : "";
+  const third = st.vol ? [st.vol.toLocaleString("es"), "kg"] : [String(st.reps), "reps"];
+  const shadow = () => {
+    ctx.shadowColor = "rgba(0,0,0,0.25)";
+    ctx.shadowBlur = 14;
+  };
+  const noShadow = () => {
+    ctx.shadowColor = "transparent";
+    ctx.shadowBlur = 0;
+  };
+  ctx.textBaseline = "alphabetic";
 
-  if (!tpl.transparent) {
-    ctx.fillStyle = "#0d0d10";
-    ctx.fillRect(0, 0, W, H);
-    [[140, 220, 700, "rgba(255,116,72,0.22)"], [960, 1700, 700, "rgba(82,199,230,0.16)"], [940, 260, 520, "rgba(178,157,255,0.16)"]].forEach(([x, y, r, c]) => {
-      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-      g.addColorStop(0, c);
-      g.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, W, H);
-    });
-    ctx.save();
-    ctx.beginPath();
-    ctx.roundRect(110, 400, W - 220, 1120, 56);
-    ctx.fillStyle = "rgba(244,239,230,0.05)";
-    ctx.fill();
-    ctx.lineWidth = 2;
-    const rim = ctx.createLinearGradient(0, 400, 0, 1520);
-    rim.addColorStop(0, "rgba(244,239,230,0.28)");
-    rim.addColorStop(1, "rgba(244,239,230,0.04)");
-    ctx.strokeStyle = rim;
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  ctx.save();
-  if (tpl.transparent) {
-    ctx.shadowColor = "rgba(0,0,0,0.22)";
-    ctx.shadowBlur = 16;
+  if (tpl.id === "anillo") {
+    // Composición horizontal compacta: anillo pequeño + texto al lado
+    const r = 120, ringX = cx - 250, ringY = cy;
+    noShadow();
+    drawRing(ctx, ringX, ringY, r, 14, frac);
+    shadow();
+    ctx.textAlign = "center";
+    ctx.fillStyle = INK;
+    ctx.font = `500 46px ${F_DISPLAY}`;
+    ctx.fillText(`${Math.round(Math.min(1, frac) * 100)}%`, ringX, ringY + 16);
+    const tx = ringX + r + 70;
+    ctx.textAlign = "left";
+    ctx.font = `italic 44px ${F_SERIF}`;
+    ctx.fillStyle = INK_SOFT;
+    ctx.fillText(`${e.dayName}, ${dateTxt.split(",")[0]}`, tx, cy - 118);
+    ctx.font = `500 150px ${F_DISPLAY}`;
+    ctx.fillStyle = INK;
+    ctx.fillText(timeTxt, tx - 4, cy + 34);
+    richLine(
+      ctx,
+      [
+        [String(st.ex), `700 36px ${F_BODY}`],
+        [" ejercicios   ", `italic 36px ${F_SERIF}`, INK_SOFT],
+        [String(st.sets), `700 36px ${F_BODY}`],
+        [" series   ", `italic 36px ${F_SERIF}`, INK_SOFT],
+        [third[0], `700 36px ${F_BODY}`],
+        [" " + third[1], `italic 36px ${F_SERIF}`, INK_SOFT],
+      ],
+      tx,
+      cy + 110,
+      "left"
+    );
+    noShadow();
+    drawWordmark(ctx, cx, cy + 270, 26);
+    return;
   }
 
   if (tpl.id === "editorial") {
+    // Jerarquía tipográfica: versalitas, cursivas serif, cifras grandes y negritas
     const x = 150, right = W - 150;
-    let y = 520;
+    let y = cy - 360;
+    shadow();
     ctx.textAlign = "left";
-    ctx.font = `500 34px ${F_BODY}`;
+    ctx.font = `700 28px ${F_BODY}`;
     ctx.fillStyle = INK_SOFT;
-    ctx.fillText(subtitle(e), x, y);
-    y += 70;
-    const rows = [
-      ["Tiempo", timeTxt],
-      ["Ejercicios", String(st.ex)],
-      ["Series", String(st.sets)],
-      st.vol ? ["Volumen", `${st.vol.toLocaleString("es")} kg`] : ["Repeticiones", String(st.reps)],
-    ];
-    rows.forEach(([l, v]) => {
-      hairline(ctx, x, y, right);
-      ctx.textAlign = "left";
-      ctx.font = `500 34px ${F_BODY}`;
-      ctx.fillStyle = INK_SOFT;
-      ctx.fillText(l, x, y + 64);
-      ctx.textAlign = "right";
-      ctx.font = `500 120px ${F_DISPLAY}`;
-      ctx.fillStyle = INK;
-      ctx.fillText(v, right, y + 150);
-      y += 196;
-    });
-    hairline(ctx, x, y, right);
-    drawWordmark(ctx, x, y + 110, 34, "left");
-  } else {
-    const ringY = tpl.transparent ? 760 : 800;
-    const r = 250;
-    ctx.save();
-    ctx.shadowColor = "transparent";
-    drawRing(ctx, cx, ringY, r, 18, frac);
-    ctx.restore();
-    ctx.textAlign = "center";
-    ctx.textBaseline = "alphabetic";
+    const kicker = `ENTRENO${weekTxt ? " · " + weekTxt.toUpperCase() : ""}`;
+    const kw = [...kicker].reduce((w, c) => w + ctx.measureText(c).width, 0) + 6 * (kicker.length - 1);
+    spaced(ctx, kicker, x + kw / 2, y, 6);
+    y += 110;
+    ctx.textAlign = "left";
+    ctx.font = `400 120px ${F_SERIF}`;
     ctx.fillStyle = INK;
-    ctx.font = `500 150px ${F_DISPLAY}`;
-    ctx.fillText(timeTxt, cx, ringY + 50);
-    ctx.font = `500 32px ${F_BODY}`;
+    ctx.fillText(e.dayName, x, y);
+    y += 64;
+    ctx.font = `italic 50px ${F_SERIF}`;
     ctx.fillStyle = INK_SOFT;
-    spaced(ctx, "TIEMPO", cx, ringY + 110, 8);
-
-    const y0 = ringY + r + 150;
-    hairline(ctx, cx - 330, y0 - 60, cx + 330);
-    const cols = [
-      ["Ejercicios", String(st.ex)],
-      ["Series", String(st.sets)],
-      st.vol ? ["Kg", st.vol.toLocaleString("es")] : ["Reps", String(st.reps)],
-    ];
-    cols.forEach(([l, v], i) => statBlock(ctx, cx + (i - 1) * 230, y0, l, v, 32, 92));
-    ctx.font = `500 30px ${F_BODY}`;
+    ctx.fillText(dateTxt.charAt(0).toUpperCase() + dateTxt.slice(1), x, y);
+    y += 50;
+    noShadow();
+    hairline(ctx, x, y, right);
+    shadow();
+    y += 230;
+    ctx.font = `500 240px ${F_DISPLAY}`;
+    ctx.fillStyle = INK;
+    ctx.fillText(timeTxt, x - 8, y);
+    const tw = ctx.measureText(timeTxt).width;
+    ctx.font = `italic 56px ${F_SERIF}`;
     ctx.fillStyle = INK_SOFT;
-    ctx.textAlign = "center";
-    ctx.fillText(subtitle(e), cx, y0 + 190);
-    drawWordmark(ctx, cx, y0 + 300, 30);
+    ctx.fillText("minutos", x + tw + 24, y);
+    y += 120;
+    richLine(ctx, [[String(st.ex), `800 54px ${F_BODY}`], [" ejercicios,", `italic 58px ${F_SERIF}`, INK_SOFT]], x, y, "left");
+    y += 76;
+    richLine(ctx, [[String(st.sets), `800 54px ${F_BODY}`], [" series y ", `italic 58px ${F_SERIF}`, INK_SOFT], [third[0], `800 54px ${F_BODY}`], [" " + (third[1] === "kg" ? "kg movidos." : "repeticiones."), `italic 58px ${F_SERIF}`, INK_SOFT]], x, y, "left");
+    y += 70;
+    noShadow();
+    hairline(ctx, x, y, right);
+    drawWordmark(ctx, x, y + 80, 26, "left");
+    return;
   }
+
+  // Tarjeta: solo la tarjeta es visible, el resto del PNG queda transparente
+  const pw = 820, ph = 640, px = cx - pw / 2, py = cy - ph / 2, pr = 54;
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.35)";
+  ctx.shadowBlur = 50;
+  ctx.shadowOffsetY = 16;
+  ctx.beginPath();
+  ctx.roundRect(px, py, pw, ph, pr);
+  const fill = ctx.createLinearGradient(px, py, px + pw, py + ph);
+  fill.addColorStop(0, "rgba(28, 26, 34, 0.86)");
+  fill.addColorStop(1, "rgba(14, 14, 18, 0.9)");
+  ctx.fillStyle = fill;
+  ctx.fill();
   ctx.restore();
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(px, py, pw, ph, pr);
+  ctx.clip();
+  [[px + 40, py + 20, 380, "rgba(255,116,72,0.22)"], [px + pw, py + ph, 420, "rgba(82,199,230,0.16)"], [px + pw - 60, py, 300, "rgba(178,157,255,0.16)"]].forEach(([x, y, r, c]) => {
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, c);
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(px, py, pw, ph);
+  });
+  ctx.restore();
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(px + 1, py + 1, pw - 2, ph - 2, pr);
+  const rim = ctx.createLinearGradient(0, py, 0, py + ph);
+  rim.addColorStop(0, "rgba(244,239,230,0.32)");
+  rim.addColorStop(1, "rgba(244,239,230,0.05)");
+  ctx.strokeStyle = rim;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.restore();
+
+  const ix = px + 64;
+  drawWordmark(ctx, ix, py + 80, 24, "left");
+  ctx.textAlign = "right";
+  ctx.font = `italic 36px ${F_SERIF}`;
+  ctx.fillStyle = INK_SOFT;
+  ctx.fillText(dateTxt.split(",")[0].replace(/^./, (c) => c.toUpperCase()) + (dateTxt.includes(",") ? "," + dateTxt.split(",")[1] : ""), px + pw - 64, py + 92);
+  drawRing(ctx, ix + 70, py + 290, 70, 10, frac);
+  ctx.textAlign = "left";
+  ctx.font = `italic 40px ${F_SERIF}`;
+  ctx.fillStyle = INK_SOFT;
+  ctx.fillText(e.dayName, ix + 180, py + 238);
+  ctx.font = `500 140px ${F_DISPLAY}`;
+  ctx.fillStyle = INK;
+  ctx.fillText(timeTxt, ix + 172, py + 350);
+  hairline(ctx, ix, py + 440, px + pw - 64);
+  const cols = [[String(st.ex), "ejercicios"], [String(st.sets), "series"], third];
+  const colW = (pw - 128) / 3;
+  cols.forEach(([v, l], i) => {
+    const x0 = ix + colW * i;
+    ctx.textAlign = "left";
+    ctx.font = `500 72px ${F_DISPLAY}`;
+    ctx.fillStyle = INK;
+    ctx.fillText(v, x0, py + 535);
+    ctx.font = `italic 34px ${F_SERIF}`;
+    ctx.fillStyle = INK_SOFT;
+    ctx.fillText(l, x0, py + 580);
+  });
 }
 
 async function ensureShareFonts() {
@@ -1657,6 +1741,9 @@ async function ensureShareFonts() {
       document.fonts.load(`700 80px ${F_DISPLAY}`),
       document.fonts.load(`500 40px ${F_BODY}`),
       document.fonts.load(`600 40px ${F_BODY}`),
+      document.fonts.load(`800 40px ${F_BODY}`),
+      document.fonts.load(`italic 40px ${F_SERIF}`),
+      document.fonts.load(`400 40px ${F_SERIF}`),
     ]);
   } catch {}
 }

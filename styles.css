@@ -586,3 +586,65 @@ body::before {
   animation: morph .5s cubic-bezier(.2, .8, .2, 1) both;
 }
 .update-banner .btn { min-height: 40px; padding: 8px 14px; }
+
+/* =========================================================
+   PANTALLA DE EJERCICIO (una sola tarjeta, sin scroll)
+   ========================================================= */
+.context { margin-top: 12px; font-size: 13px; font-weight: 600; color: var(--muted); letter-spacing: .02em; }
+.ex-name { margin: 4px 0 6px; font: 700 30px/1.02 var(--font-display); text-transform: uppercase; }
+.ex-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--muted); font-size: 15px; }
+.ex-meta > span { font-weight: 600; color: var(--text); }
+
+.phase { margin-top: 14px; padding: 14px 14px 12px; display: flex; flex-direction: column; gap: 10px; }
+.phase-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.phase .state-pill { margin: 0; }
+.set-info { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; color: var(--muted); }
+.phase-center { display: grid; place-items: center; }
+.phase .ring, .phase .rep-counter { width: 196px; height: 196px; margin: 2px auto; }
+.phase .ring-num { width: 168px; height: 168px; font-size: 60px; }
+.phase .rep-counter span { font-size: 84px; }
+.phase-caption { margin: -2px 0 0; text-align: center; color: var(--muted); font-size: 14px; min-height: 20px; }
+.phase-caption b { color: var(--text); font-weight: 600; }
+
+.tools { display: flex; justify-content: center; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ibtn {
+  width: 48px; height: 44px; border-radius: 14px; display: grid; place-items: center; cursor: pointer;
+  background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.08); color: var(--text);
+}
+.ibtn .ico { width: 22px; height: 22px; }
+.ibtn:active { transform: scale(.94); }
+.tempo-ctl {
+  display: inline-flex; align-items: center; height: 44px; border-radius: 14px; overflow: hidden;
+  background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.08);
+}
+.tempo-ctl button { width: 40px; height: 100%; border: 0; background: none; color: var(--text); font: 600 22px/1 var(--font-body); cursor: pointer; }
+.tempo-ctl span { padding: 0 4px; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.tempo-ctl b { font: 600 20px/1 var(--font-display); color: var(--text); }
+.kg-ctl {
+  display: inline-flex; align-items: center; gap: 6px; height: 44px; padding: 0 12px; border-radius: 14px;
+  background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.08); color: var(--muted); font-size: 14px;
+}
+.kg-ctl input { width: 64px; border: 0; background: none; color: var(--text); font: 600 22px/1 var(--font-display); text-align: right; }
+.kg-ctl input:focus { outline: none; }
+
+.phase-next {
+  display: flex; align-items: baseline; gap: 8px; padding-top: 10px; margin-top: 2px;
+  border-top: 1px solid rgba(255,255,255,.07); font-size: 14px; min-width: 0;
+}
+.phase-next span { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; flex: none; }
+.phase-next b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.tech summary { display: flex; align-items: baseline; gap: 8px; list-style: none; }
+.tech summary::-webkit-details-marker { display: none; }
+.tech summary::after { content: "›"; margin-left: auto; transition: transform .2s; font-size: 20px; line-height: 1; }
+.tech[open] summary::after { transform: rotate(90deg); }
+.tech summary span { color: var(--text); }
+.tech summary small { color: var(--muted); font-weight: 500; }
+.tech .notes { margin-top: 10px; }
+
+.workout-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; padding: 0 2px; }
+.workout-foot .text-btn { color: var(--muted); font-weight: 600; }
+.workout-foot .text-btn:disabled { opacity: .35; }
+.workout-foot .text-btn.danger { color: #e98b8b; }
+
+.progress { height: 4px; }
