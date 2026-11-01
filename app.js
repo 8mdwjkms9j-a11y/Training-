@@ -173,6 +173,78 @@ function openSheet(opts) {
   return close;
 }
 
+// Última vez que registraste peso en este ejercicio (desde el historial)
+function lastWeightLog(name) {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const x = history[i].exercises.find((e) => e.name === name);
+    const sets = x ? x.sets.filter((st) => st.kg) : [];
+    if (sets.length) {
+      const top = sets.reduce((a, b) => (b.kg > a.kg ? b : a));
+      return { kg: top.kg, reps: top.reps, time: top.time, date: history[i].date };
+    }
+  }
+  return null;
+}
+
+function fmtKg(v) {
+  return String(Math.round(v * 10) / 10).replace(".", ",");
+}
+
+// Bloque de esfuerzo + peso dentro del detalle del ejercicio
+function effortBlockHtml(ex) {
+  if (!ex.rpe) return "";
+  const plain = rpePlain(ex.rpe, !!ex.time);
+  const last = lastWeightLog(ex.name);
+  const kg = lastKg[ex.name] ?? last?.kg;
+  const lastTxt = last
+    ? `Última sesión: <b>${fmtKg(last.kg)} kg</b>${last.reps ? ` × ${last.reps}` : last.time ? ` · ${last.time} s` : ""} · ${fmtDate(last.date)}`
+    : "Aún sin registros: anota con qué peso partes.";
+  return `<section class="effort">
+    <div class="effort-head"><span class="rpe-badge">RPE ${esc(ex.rpe)}</span><b>${esc(plain.short)}</b></div>
+    <p class="effort-text">${esc(plain.long)}</p>
+    <div class="kg-stepper" role="group" aria-label="Peso para ${esc(ex.name)}">
+      <button class="kg-btn" data-kg="-1" aria-label="Restar 1 kg">−1</button>
+      <button class="kg-btn small" data-kg="-0.5" aria-label="Restar medio kilo">−½</button>
+      <label class="kg-val" for="sheetKg"><input id="sheetKg" type="number" inputmode="decimal" step="0.5" min="0" placeholder="—" value="${kg ?? ""}"><span>kg</span></label>
+      <button class="kg-btn small" data-kg="0.5" aria-label="Sumar medio kilo">+½</button>
+      <button class="kg-btn" data-kg="1" aria-label="Sumar 1 kg">+1</button>
+    </div>
+    <p class="effort-last">${lastTxt}<span class="kg-saved" id="kgSaved" aria-live="polite"></span></p>
+  </section>`;
+}
+
+function bindEffort(el, ex) {
+  const input = el.querySelector("#sheetKg");
+  if (!input) return;
+  const saved = el.querySelector("#kgSaved");
+  let t = null;
+  const store = () => {
+    const v = input.value === "" ? null : Math.max(0, Math.round(parseFloat(input.value.replace(",", ".")) * 2) / 2);
+    if (v === null || isNaN(v)) delete lastKg[ex.name];
+    else lastKg[ex.name] = v;
+    save(LS.kg, lastKg);
+    // si el ejercicio está en pantalla, actualiza su campo de kg
+    const wkIn = document.getElementById("kgInput");
+    if (wkIn && session && curEx()?.name === ex.name) wkIn.value = v ?? "";
+    saved.textContent = " · Guardado ✓";
+    clearTimeout(t);
+    t = setTimeout(() => (saved.textContent = ""), 1400);
+  };
+  el.querySelectorAll("[data-kg]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const cur = parseFloat((input.value || "0").replace(",", ".")) || 0;
+      input.value = Math.max(0, Math.round((cur + parseFloat(b.dataset.kg)) * 2) / 2);
+      beep(900, 0.03, 1, 0.2);
+      store();
+    })
+  );
+  input.addEventListener("change", store);
+  input.addEventListener("input", () => {
+    clearTimeout(t);
+    t = setTimeout(store, 500);
+  });
+}
+
 function techSheet(ex, wk, { back } = {}) {
   const chips = [exTarget(ex, wk)].filter(Boolean).map((t) => `<span class="sheet-chip">${esc(t)}</span>`).join("");
   openSheet({
@@ -181,9 +253,10 @@ function techSheet(ex, wk, { back } = {}) {
     back,
     body: `
       <div class="sheet-chips">${chips}</div>
-      ${ex.rpe ? `<p class="rpe-goal small-goal"><b>${esc(rpePlain(ex.rpe, !!ex.time).short)}</b> · ${esc(rpePlain(ex.rpe, !!ex.time).long)}</p>` : ""}
+      ${effortBlockHtml(ex)}
       ${ex.notes ? `<p class="sheet-notes">${esc(ex.notes)}</p>` : ""}
       <div class="sheet-video">${videoHtml(ex)}</div>`,
+    onMount: (el) => bindEffort(el, ex),
   });
 }
 
@@ -322,9 +395,10 @@ function rpeSheet(ex) {
     title: ex ? plain.short : "Esfuerzo (RPE)",
     subtitle: ex ? `${esc(ex.name)} · RPE ${esc(ex.rpe)}` : "Qué tan duro debería sentirse",
     body: `
-      ${ex ? `<p class="rpe-goal">${esc(plain.long)}</p>` : ""}
+      ${ex ? effortBlockHtml(ex) : ""}
       ${RPE_INTRO}
       ${rpeTableHtml(ex ? ex.rpe : null)}`,
+    onMount: (el) => ex && bindEffort(el, ex),
   });
 }
 
@@ -1358,6 +1432,11 @@ function metroTick() {
 
 function logSet(entry) {
   const st = curStep();
+  const exNow = curEx();
+  if (exNow.rpe && entry.kg === undefined) {
+    const k = lastKg[exNow.name] ?? lastWeightLog(exNow.name)?.kg;
+    if (k != null) entry.kg = k;
+  }
   (session.log[st.ex] = session.log[st.ex] || []).push({ ...entry, set: st.set, side: st.side, at: Date.now() });
 
   if (session.i + 1 >= session.steps.length) {
@@ -1527,7 +1606,7 @@ function renderWorkout() {
       ? `<button class="btn primary full big" data-act="doneReps">Serie lista</button>`
       : `<button class="btn primary full big" data-act="metroStart">${icon("play")} Iniciar conteo</button>`;
   } else {
-    const kg = lastKg[ex.name] ?? "";
+    const kg = lastKg[ex.name] ?? lastWeightLog(ex.name)?.kg ?? "";
     center = `<button class="rep-counter" id="repBtn" data-act="repPlus" aria-label="Sumar repetición">
         <span id="repNum">${session.reps}</span><small>${ex.reps ? `/ ${ex.reps}` : "reps"}</small></button>`;
     caption = `Toca el círculo en cada repetición · <span id="setClock">${fmt((Date.now() - session.setStartedAt) / 1000)}</span>`;

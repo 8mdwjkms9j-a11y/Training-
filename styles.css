@@ -884,3 +884,37 @@ body.is-workout .workout-foot { padding-bottom: 0; }
 .rpe-tr span:last-child { font-size: 14px; color: #dedbd4; }
 .rpe-tr.on { background: color-mix(in srgb, var(--rpe) 12%, transparent); border-radius: 10px; border-bottom-color: transparent; }
 .rpe-tip { margin: 14px 0 0; }
+
+/* ---------- esfuerzo + peso en el detalle ---------- */
+.effort {
+  display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 18px;
+  background: color-mix(in srgb, var(--rpe) 8%, rgba(255,255,255,.03));
+  border: 1px solid color-mix(in srgb, var(--rpe) 30%, transparent);
+}
+.effort-head { display: flex; align-items: center; gap: 10px; }
+.effort-head b { font: 700 22px/1.1 var(--font-display); text-transform: uppercase; letter-spacing: .01em; }
+.rpe-badge {
+  flex: none; font: 700 14px/1 var(--font-display); letter-spacing: .06em; color: #1a1205;
+  background: var(--rpe); padding: 5px 9px; border-radius: 8px;
+}
+.effort-text { margin: 0; font-size: 14px; line-height: 1.5; color: #dedbd4; }
+.kg-stepper { display: grid; grid-template-columns: 48px 42px 1fr 42px 48px; gap: 6px; align-items: stretch; }
+.kg-btn {
+  height: 52px; border-radius: 14px; cursor: pointer; font: 600 18px/1 var(--font-display);
+  background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.1); color: var(--text);
+}
+.kg-btn.small { font-size: 15px; color: var(--muted); }
+.kg-btn:active { transform: scale(.94); transition-duration: .06s; }
+.kg-val {
+  display: flex; align-items: baseline; justify-content: center; gap: 4px; height: 52px; padding: 0 8px; border-radius: 14px;
+  background: rgba(0,0,0,.25); border: 1px solid color-mix(in srgb, var(--rpe) 35%, transparent);
+}
+.kg-val input {
+  width: 100%; min-width: 0; border: 0; background: none; color: var(--text); text-align: right;
+  font: 700 30px/52px var(--font-display); font-variant-numeric: tabular-nums;
+}
+.kg-val input:focus { outline: none; }
+.kg-val span { color: var(--muted); font-size: 14px; font-weight: 600; }
+.effort-last { margin: 0; font-size: 13px; color: var(--muted); }
+.effort-last b { color: var(--text); }
+.kg-saved { color: var(--ok); font-weight: 600; }
