@@ -250,7 +250,6 @@ function bindEffort(el, ex) {
     b.addEventListener("click", () => {
       const cur = parseFloat((input.value || "0").replace(",", ".")) || 0;
       input.value = Math.max(0, Math.round((cur + parseFloat(b.dataset.kg)) * 2) / 2);
-      beep(900, 0.03, 1, 0.2);
       store();
     })
   );
@@ -463,7 +462,7 @@ let history = load(LS.history, []);
 let session = load(LS.session, null);
 let lastKg = load(LS.kg, {});
 let prefs = Object.assign(
-  { sound: true, voice: true, autoRest: true, week: "auto", prep: 10, autoStart: true, metroEvery: false, ambient: true },
+  { sound: true, voice: true, autoRest: true, week: "auto", prep: 10, autoStart: true },
   load(LS.prefs, {})
 );
 let lastTempo = load("entreno.tempo", {});
@@ -608,6 +607,9 @@ function toast(msg) {
   setTimeout(() => t.remove(), 2200);
 }
 
+const SIDE_NAME = { 1: "derecho", 2: "izquierdo" };
+const SIDE_LABEL = { 1: "Derecho", 2: "Izquierdo" };
+
 // ---------- grupos (circuitos / superseries) ----------
 // Devuelve [{start, end, name}] para ejercicios consecutivos con el mismo group+block.
 function groupsOf(day) {
@@ -644,11 +646,14 @@ function buildSteps(day, wk) {
     for (let r = 0; r < rounds; r++) {
       const active = members.filter((m) => r < setsOf(m.ex, wk));
       active.forEach((m, k) => {
-        const sides = m.ex.perSide && m.ex.time ? 2 : 1;
+        // Por lado = dos pasos (derecho, luego izquierdo), salvo el conteo con metrónomo
+        // (cambia de lado solo) y los alternados (dead bug).
+        const metro = !m.ex.time && +m.ex.reps > 0 && +m.ex.tempo > 0;
+        const sides = m.ex.perSide && !m.ex.alternate && !metro ? 2 : 1;
         for (let s = 1; s <= sides; s++) {
           const lastInRound = k === active.length - 1 && s === sides;
           let rest;
-          if (s < sides) rest = 5; // cambio de lado
+          if (s < sides) rest = m.ex.time ? 5 : 0; // cambio de lado
           else if (g.name && !lastInRound) rest = +m.ex.rest || 0; // entre ejercicios del circuito
           else if (g.name) rest = +active[active.length - 1].ex.rest || 0; // entre rondas
           else rest = +m.ex.rest || 0;
@@ -751,27 +756,17 @@ function beep(freq = 880, dur = 0.15, times = 1, vol = 0.5) {
   }
 }
 
-// Golpe tipo "bloque de madera": suave pero se escucha bien en el parlante del teléfono
-function click(accent = true, vol = 0.7) {
-  if (!ctxReady()) return;
-  const t = audioCtx.currentTime + 0.01;
-  const out = audioCtx.createGain();
-  out.gain.value = vol;
-  out.connect(audioCtx.destination);
-  [[accent ? 1800 : 1400, "triangle", 0.05], [accent ? 900 : 700, "sine", 0.09]].forEach(([f, type, d]) => {
-    const o = audioCtx.createOscillator();
-    const g = audioCtx.createGain();
-    o.type = type;
-    o.frequency.setValueAtTime(f, t);
-    o.frequency.exponentialRampToValueAtTime(f * 0.7, t + d);
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(1, t + 0.004);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + d);
-    o.connect(g).connect(out);
-    o.start(t);
-    o.stop(t + d + 0.02);
-  });
+// Sonidos de la app (solo estos):
+//  count  = cuenta regresiva 3-2-1 del "Prepárate"
+//  start  = empieza el ejercicio (o el otro lado)
+//  end    = termina el ejercicio (o un lado)
+//  finish = termina el entrenamiento
+const SFX = { count: [660, 0.1, 1, 0.45], start: [990, 0.2, 1, 0.5], end: [1175, 0.2, 2, 0.5], finish: [1320, 0.18, 3, 0.45] };
+function sfx(kind) {
+  const [f, d, n, v] = SFX[kind];
+  beep(f, d, n, v);
 }
+
 
 // iOS puede mandar "pausa"/"play" al panel Ahora suena cuando la voz o un cambio de
 // estado toman el audio. Esas órdenes no son tuyas: las ignoramos durante un momento.
@@ -900,7 +895,6 @@ function renderNow(state, changed) {
   }
   if (changed) $app.querySelector(".phase")?.classList.add("morph");
   updateNowPlaying(true);
-  updateAmbient();
 }
 
 function bindActs(map) {
@@ -1269,11 +1263,16 @@ function scheduleTimerSounds() {
   if (!prefs.sound || !audioCtx || audioCtx.state !== "running") return;
   const left = (t.endsAt - Date.now()) / 1000;
   const now = audioCtx.currentTime + 0.02;
-  [3, 2, 1].forEach((k) => left - k > 0.05 && scheduleTone(now + left - k, 660, 0.1, 0.5));
   const end = now + Math.max(0, left);
-  const work = session.phase === "work";
-  scheduleTone(end, 990, work ? 0.25 : 0.3, 0.5);
-  scheduleTone(end + (work ? 0.33 : 0.38), 990, work ? 0.25 : 0.3, 0.5);
+  const play = (at, kind) => {
+    const [f, d, n, v] = SFX[kind];
+    for (let i = 0; i < n; i++) scheduleTone(at + i * (d + 0.08), f, d, v);
+  };
+  if (session.phase === "work") play(end, "end");
+  else {
+    if (session.restKind === "prep") [3, 2, 1].forEach((k) => left - k > 0.05 && play(now + left - k, "count"));
+    play(end, "start");
+  }
   t.sched = true;
 }
 
@@ -1314,9 +1313,9 @@ function tick() {
   if (t && t.running) {
     const left = timerLeft();
     const whole = Math.ceil(left);
-    if (!t.sched && whole <= 3 && whole > 0 && t.lastBeep !== whole) {
+    if (!t.sched && session.phase === "rest" && session.restKind === "prep" && whole <= 3 && whole > 0 && t.lastBeep !== whole) {
       t.lastBeep = whole;
-      beep(660, 0.1);
+      sfx("count");
     }
     if (left <= 0) {
       t.running = false;
@@ -1327,7 +1326,6 @@ function tick() {
   }
   if (route.view === "workout") paintLive();
   if (Date.now() - npAt > 1500) {
-    updateAmbient();
     npAt = Date.now();
     updateNowPlaying();
   }
@@ -1336,14 +1334,15 @@ function tick() {
 function onTimerDone() {
   const sched = session.timer?.sched;
   if (session.phase === "work") {
-    if (!sched) beep(990, 0.25, 2);
+    if (!sched) sfx("end");
     buzz([200, 100, 200]);
     logSet({ time: curEx().time });
   } else {
-    if (!sched) beep(990, 0.3, 2);
+    if (!sched) sfx("start");
     buzz([300, 100, 300]);
-    if (!(prefs.autoStart && (curEx().time || hasMetro(curEx())))) say(curStep().side === 2 ? "Otro lado" : "¡Vamos!");
-    beginWork(true);
+    const st = curStep();
+    if (!(prefs.autoStart && (curEx().time || hasMetro(curEx())))) say(st.side ? `Lado ${SIDE_NAME[st.side]}` : "¡Vamos!");
+    beginWork(true, { quiet: true }); // el pitido de inicio ya sonó al terminar la cuenta
   }
 }
 
@@ -1361,11 +1360,12 @@ function bumpRep() {
   el.classList.add("bump");
 }
 
-function metroStart() {
-  session.metro = { running: true, t0: Date.now() + 500, elapsed: 0, side: 1, switchUntil: null, switchLeft: 0, lastBeat: -1, lastHalf: -1, lastCount: null };
+function metroStart(quiet = false) {
+  const ex = curEx();
+  session.metro = { running: true, t0: Date.now() + 500, elapsed: 0, side: 1, switchUntil: null, switchLeft: 0, lastBeat: -1, lastHalf: -1, lastCount: null, quiet };
   session.reps = 0;
   session.setStartedAt = Date.now();
-  say(prefs.metroEvery ? "Sigue el pitido" : "Sigue el conteo");
+  say(ex.perSide ? (ex.alternate ? "Alterna, empieza con el derecho" : "Lado derecho") : "Sigue el conteo");
   persist();
 }
 function metroPause() {
@@ -1404,12 +1404,8 @@ function metroTick() {
   const ex = curEx();
   const now = Date.now();
   if (m.switchUntil) {
-    const left = Math.ceil((m.switchUntil - now) / 1000);
-    if (left <= 3 && left > 0 && m.lastCount !== left) {
-      m.lastCount = left;
-      beep(660, 0.08, 1, 0.3);
-    }
     if (now >= m.switchUntil) {
+      sfx("start");
       setTimeout(() => route.view === "workout" && render(), 0);
       m.switchUntil = null;
       m.side++;
@@ -1433,15 +1429,15 @@ function metroTick() {
       setTimeout(() => route.view === "workout" && render(), 0);
       m.lastCount = null;
       session.reps = +ex.reps;
-      beep(990, 0.15, 2, 0.4);
-      say("Cambia de lado");
+      sfx("end");
+      say(`Cambia al lado ${SIDE_NAME[m.side + 1]}`);
       persist();
       paintLive();
       return;
     }
     session.reps = +ex.reps;
     session.metro = null;
-    beep(1200, 0.15, 2, 0.45);
+    sfx("end");
     buzz([150, 80, 150]);
     logSet({ reps: +ex.reps, time: Math.round((now - session.setStartedAt) / 1000) });
     return;
@@ -1449,19 +1445,10 @@ function metroTick() {
   if (beat !== m.lastBeat) {
     m.lastBeat = beat;
     session.reps = ex.alternate ? Math.floor(beat / 2) + 1 : beat + 1;
-    const accent = ex.alternate ? beat % 2 === 0 : true;
-    // Por defecto suena solo al inicio (y al final, más abajo); el conteo se ve en pantalla.
-    if (beat === 0) beep(990, 0.18, 1, 0.5);
-    else if (prefs.metroEvery) click(accent, 0.75);
+    // solo suena al empezar (si no sonó ya al terminar la cuenta); el conteo se ve en pantalla
+    if (beat === 0 && m.side === 1 && !m.quiet) sfx("start"); // el 2º lado ya sonó al terminar el cambio
     bumpRep();
     persist();
-  }
-  if (prefs.metroEvery) {
-    const half = Math.floor((el - tempo / 2) / tempo);
-    if (half >= 0 && half < total && half !== m.lastHalf) {
-      m.lastHalf = half;
-      click(false, 0.18);
-    }
   }
 }
 
@@ -1498,20 +1485,20 @@ function logSet(entry) {
     session.phase = "rest";
     session.reps = 0;
     timerStart(rest);
-    if (kind === "side") say("Cambia de lado");
-    else if (kind === "prep") say(`Prepárate: ${nextEx.name}`);
+    if (kind === "side") say(`Cambia al lado ${SIDE_NAME[next.side] || "izquierdo"}`);
+    else if (kind === "prep") say(`Prepárate: ${nextEx.name}${nextEx.perSide ? (nextEx.alternate ? ", alternando, parte con el derecho" : ", lado derecho") : ""}`);
     else if (changing) say(`Descanso. Luego, ${nextEx.name}`);
     else say("Descanso");
     persist();
     render();
   } else {
-    if (changing) say(nextEx.name);
-    else if (next.side === 2) say("Otro lado");
+    if (changing) say(`${nextEx.name}${next.side ? `, lado ${SIDE_NAME[next.side]}` : ""}`);
+    else if (next.side) say(`Lado ${SIDE_NAME[next.side]}`);
     beginWork(true);
   }
 }
 
-function beginWork(auto = false) {
+function beginWork(auto = false, { quiet = false } = {}) {
   shieldMedia(1500);
   cancelScheduled();
   session.phase = "work";
@@ -1523,10 +1510,10 @@ function beginWork(auto = false) {
     const ex = curEx();
     if (ex.time) {
       timerStart(+ex.time);
-      beep(990, 0.15);
-      say("Ya");
+      if (!quiet) sfx("start");
+      if (!quiet) say("Ya");
     } else if (hasMetro(ex)) {
-      metroStart();
+      metroStart(quiet);
     }
   }
   persist();
@@ -1550,7 +1537,6 @@ function jumpStep(delta) {
 
 function finishSession() {
   cancelScheduled();
-  setTimeout(updateAmbient, 0);
   const day = curDay();
   const entry = {
     date: Date.now(),
@@ -1565,13 +1551,30 @@ function finishSession() {
   save(LS.session, null);
   keepAwake(false);
   setTimeout(stopPlayback, 4000);
-  beep(1200, 0.2, 3);
+  sfx("finish");
   say("¡Entrenamiento terminado! Buen trabajo.");
   go("summary", { entry: history.length - 1 });
 }
 
 function sideLabel(st) {
-  return st.side === 1 ? " · lado 1" : st.side === 2 ? " · lado 2" : "";
+  return st.side ? ` · lado ${SIDE_NAME[st.side]}` : "";
+}
+
+// Lado que toca ahora (o el que viene, en descanso/cambio)
+function currentSide(ex, st) {
+  if (!ex.perSide) return 0;
+  if (st.side) return st.side;
+  const m = session.metro;
+  if (m) {
+    if (ex.alternate) return m.lastBeat < 0 || m.lastBeat % 2 === 0 ? 1 : 2;
+    return m.switchUntil ? Math.min(2, m.side + 1) : m.side;
+  }
+  return 1;
+}
+function sideTagHtml(ex, st) {
+  const sd = currentSide(ex, st);
+  if (!sd) return "";
+  return `<span class="side-tag s${sd}" id="sideTag">${sd === 1 ? "→" : "←"} Lado ${SIDE_NAME[sd]}</span>`;
 }
 
 function renderWorkout() {
@@ -1623,13 +1626,13 @@ function renderWorkout() {
   if (isRest) {
     const kind = session.restKind || (st.side === 2 ? "side" : "rest");
     center = ringHtml();
-    caption = kind === "side" ? `Ahora el otro lado` : `Sigue: <b>${esc(ex.name)}</b> · ${setTxt.toLowerCase()}`;
+    caption = kind === "side" ? `Ahora el lado <b>${SIDE_NAME[st.side]}</b>` : `Sigue: <b>${esc(ex.name)}</b>${st.side ? ` · lado ${SIDE_NAME[st.side]}` : ""} · ${setTxt.toLowerCase()}`;
     tools = `${ib("minus15", "minus15", "Restar 15 segundos")}${ib("pause", session.timer?.running ? "pause" : "play", session.timer?.running ? "Pausar" : "Seguir")}${ib("plus15", "plus15", "Sumar 15 segundos")}`;
     primary = `<button class="btn primary full big" data-act="skipRest">${kind === "prep" ? "Estoy listo" : kind === "side" ? "Listo, sigo" : "Saltar descanso"}</button>`;
   } else if (isTimed) {
     const t = session.timer;
     center = t ? ringHtml() : `<div class="ring" id="ring" style="--p:0"><div class="ring-num" id="bigTime">${fmt(ex.time)}</div></div>`;
-    caption = st.side ? `Lado ${st.side} de 2` : `de ${ex.time} s`;
+    caption = st.side ? `de ${ex.time} s · ${st.side === 1 ? "luego el izquierdo" : "último lado"}` : `de ${ex.time} s`;
     if (t) {
       tools = `${ib("pause", t.running ? "pause" : "play", t.running ? "Pausar" : "Seguir")}${ib("plus15", "plus15", "Sumar 15 segundos")}${ib("resetTimed", "reset", "Reiniciar")}`;
       primary = `<button class="btn primary full big" data-act="doneTimed">Listo</button>`;
@@ -1677,6 +1680,7 @@ function renderWorkout() {
         <div class="state-pill" role="status"><i></i><span id="stateTxt">${STATE_LABEL[state] || ""}</span></div>
         <div class="set-info">${setTxt}${setDotsHtml}</div>
       </header>
+      ${ex.perSide ? `<div class="side-row">${sideTagHtml(ex, st)}</div>` : ""}
       <div class="phase-center">${center}</div>
       <p class="phase-caption">${caption}</p>
       ${tools ? `<div class="tools">${tools}</div>` : ""}
@@ -1705,16 +1709,11 @@ function renderWorkout() {
     repPlus: () => {
       if (+ex.reps && session.reps >= +ex.reps) {
         buzz(60);
-        beep(300, 0.08, 1, 0.2);
         return toast(`Máximo ${ex.reps} repeticiones`);
       }
       session.reps++;
       persist();
-      beep(1000, 0.04, 1, 0.3);
-      if (+ex.reps && session.reps === +ex.reps) {
-        buzz(150);
-        beep(1300, 0.12, 2);
-      }
+      bumpRep();
       paintLive();
     },
     metroStart: () => {
@@ -1748,6 +1747,7 @@ function renderWorkout() {
     },
     doneReps: () => {
       session.metro = null;
+      sfx("end");
       const entry = { reps: Math.min(session.reps || +ex.reps || 0, +ex.reps || Infinity), time: Math.round((Date.now() - session.setStartedAt) / 1000) };
       const kgIn = document.getElementById("kgInput");
       if (kgIn && kgIn.value !== "") {
@@ -1759,7 +1759,7 @@ function renderWorkout() {
     },
     startTimed: () => {
       unlockAudio();
-      beep(990, 0.15);
+      sfx("start");
       say("Ya");
       timerStart(+ex.time);
       render();
@@ -1837,78 +1837,19 @@ function pulseFor(ex) {
   return { cls: `live ${mode}`, style: `--beat:${beat}s;--beat-off:-${offset.toFixed(3)}s;--beat-half:-${(offset + beat / 2).toFixed(3)}s` };
 }
 
-// ---------- ambiente sonoro: acorde suave que respira al ritmo ----------
-let amb = null;
-function ambientEnsure() {
-  if (amb || !audioCtx) return amb;
-  const master = audioCtx.createGain();
-  master.gain.value = 0;
-  const filter = audioCtx.createBiquadFilter();
-  filter.type = "lowpass";
-  filter.frequency.value = 900;
-  filter.Q.value = 0.4;
-  filter.connect(master).connect(audioCtx.destination);
-  // respiración: LFO que mueve el volumen al ritmo
-  const lfo = audioCtx.createOscillator();
-  const lfoGain = audioCtx.createGain();
-  lfo.frequency.value = 0.4;
-  lfoGain.gain.value = 0;
-  lfo.connect(lfoGain).connect(master.gain);
-  lfo.start();
-  const voices = [0, 1, 2, 3].map((k) => {
-    const o = audioCtx.createOscillator();
-    o.type = k % 2 ? "sine" : "triangle";
-    o.detune.value = (k - 1.5) * 4;
-    const g = audioCtx.createGain();
-    g.gain.value = k === 0 ? 0.9 : 0.55;
-    o.connect(g).connect(filter);
-    o.start();
-    return o;
-  });
-  amb = { master, filter, lfo, lfoGain, voices, mode: "off" };
-  return amb;
-}
-const AMB_CHORDS = {
-  work: [110, 164.81, 220, 277.18], // La mayor: cálido, activo
-  rest: [87.31, 130.81, 174.61, 220], // Fa: más grave y tranquilo
-};
-function updateAmbient() {
-  const want = !prefs.ambient || !prefs.sound || !session || isWorkoutPaused()
-    ? "off"
-    : session.phase === "rest" ? "rest" : "work";
-  if (want === "off" && !amb) return;
-  if (!ctxReady() || !ambientEnsure()) return;
-  const t = audioCtx.currentTime;
-  const ex = session ? curEx() : null;
-  const beat = want === "work" && ex && hasMetro(ex) ? tempoOf(ex) : want === "work" ? 2 : 4;
-  amb.lfo.frequency.setTargetAtTime(1 / beat, t, 0.3);
-  if (want !== amb.mode) {
-    amb.mode = want;
-    if (want === "off") {
-      amb.master.gain.setTargetAtTime(0, t, 0.25);
-      amb.lfoGain.gain.setTargetAtTime(0, t, 0.25);
-      return;
-    }
-    const chord = AMB_CHORDS[want];
-    amb.voices.forEach((o, i) => o.frequency.setTargetAtTime(chord[i], t, 0.6));
-    amb.filter.frequency.setTargetAtTime(want === "work" ? 1100 : 650, t, 0.8);
-    amb.master.gain.setTargetAtTime(want === "work" ? 0.03 : 0.022, t, 0.8);
-    amb.lfoGain.gain.setTargetAtTime(want === "work" ? 0.012 : 0.009, t, 0.8);
-  }
-}
 
 function metroStatusText(ex) {
   const m = session.metro;
   if (!m) return "";
   if (m.switchUntil) {
     const left = Math.max(0, Math.ceil(((m.running ? m.switchUntil - Date.now() : m.switchLeft)) / 1000));
-    return `Cambia de lado · ${left}`;
+    return `Cambia al lado izquierdo · ${left}`;
   }
   if (!m.running) return "En pausa · toca el círculo para seguir";
   const sides = metroSides(ex);
-  if (ex.alternate) return m.lastBeat % 2 === 0 ? "Lado 1" : "Lado 2";
+  if (ex.alternate) return "Alterna: derecho e izquierdo";
   if (Date.now() < m.t0) return "Prepárate…";
-  return sides > 1 ? `Lado ${m.side} de ${sides}` : prefs.metroEvery ? "Sigue el pitido" : "Sigue el conteo";
+  return sides > 1 ? (m.side === 1 ? "Sigue el conteo · luego el izquierdo" : "Sigue el conteo · último lado") : "Sigue el conteo";
 }
 
 // El anillo avanza con una animación CSS lineal hasta el final del tiempo:
@@ -1935,7 +1876,18 @@ function adjustTimer(delta) {
 
 // Actualiza solo los números (no recrea el video)
 function paintLive() {
-  if (route.view === "workout" && session) syncState();
+  if (route.view === "workout" && session) {
+    syncState();
+    const tag = document.getElementById("sideTag");
+    if (tag) {
+      const sd = currentSide(curEx(), curStep());
+      const txt = `${sd === 1 ? "→" : "←"} Lado ${SIDE_NAME[sd]}`;
+      if (tag.textContent !== txt) {
+        tag.textContent = txt;
+        tag.className = `side-tag s${sd} flip`;
+      }
+    }
+  }
   const big = document.getElementById("bigTime");
   const ring = document.getElementById("ring");
   if (big && session.timer) {
@@ -2550,8 +2502,6 @@ function renderSettings() {
         ${opt("voice", "Avisos por voz")}
         ${opt("autoRest", "Iniciar descanso automáticamente")}
         ${opt("autoStart", "Arrancar solo el ejercicio tras prepararse")}
-        ${opt("metroEvery", "Metrónomo: sonar en cada repetición (si no, solo al inicio y al final)")}
-        ${opt("ambient", "Ambiente sonoro suave mientras entrenas (respira al ritmo)")}
       </div>
     </section>
     <section class="section">
@@ -2563,7 +2513,7 @@ function renderSettings() {
       </div>
       <p class="muted small">Cuenta regresiva para acomodarte antes de cada ejercicio nuevo. Si el descanso de la pauta es más largo, se usa ese.</p>
       <button class="btn ghost full mt" data-act="test">Probar sonido</button>
-      <p class="muted small">Los pitidos suenan aunque el iPhone esté en silencio; súbele el volumen con los botones laterales.</p>
+      <p class="muted small">Suenan solo: la cuenta 3-2-1 de "Prepárate", el inicio y el término de cada ejercicio (y de cada lado), y el final del entrenamiento. Funcionan aunque el iPhone esté en silencio.</p>
       <p class="muted small">Durante el entrenamiento verás el ejercicio, las repeticiones o el tiempo y lo que sigue en <b>Ahora suena</b>: pantalla bloqueada, Dynamic Island y Apple Watch. Desde ahí puedes <b>pausar</b> (⏯) o pasar a lo <b>siguiente</b> (⏭).</p>
     </section>
     <section class="section">
@@ -2586,7 +2536,6 @@ function renderSettings() {
     c.addEventListener("change", () => {
       prefs[c.dataset.pref] = c.checked;
       save(LS.prefs, prefs);
-      updateAmbient();
     })
   );
   bindActs({
@@ -2596,8 +2545,8 @@ function renderSettings() {
       unlockAudio();
       ensurePlayback();
       if (!session) setTimeout(stopPlayback, 5000);
-      beep(880, 0.15, 2);
-      if (prefs.metroEvery) setTimeout(() => [0, 1, 2, 3].forEach((k) => setTimeout(() => click(k === 0, 0.75), k * 500)), 600);
+      // muestra de los sonidos: 3-2-1, inicio, término
+      [["count", 0], ["count", 600], ["count", 1200], ["start", 1800], ["end", 3000]].forEach(([k, ms]) => setTimeout(() => sfx(k), ms));
       say("Sonido de prueba");
     },
   });
@@ -2666,6 +2615,7 @@ function workoutPrimary() {
   if (ex.time) {
     if (session.timer) return logSet({ time: Math.round(session.timer.total - timerLeft()) });
     timerStart(+ex.time);
+    sfx("start");
     return route.view === "workout" && render();
   }
   if (hasMetro(ex) && !session.metro) {
@@ -2707,7 +2657,8 @@ function updateNowPlaying(force = false) {
     if (ex.time) prog = `${ex.time} s`;
     else if (session.metro?.switchUntil) prog = "Cambia de lado";
     else prog = `${session.reps}/${ex.reps || "–"}`;
-    title = `${prog} · ${ex.name}`;
+    const sd = currentSide(ex, st);
+    title = `${prog} · ${ex.name}${sd ? ` · ${SIDE_LABEL[sd]}` : ""}`;
     const nxt = session.steps.slice(session.i + 1).find((x) => x.ex !== st.ex);
     artist = `${setTxt}${nxt ? ` · Sigue: ${day.exercises[nxt.ex].name}` : " · Último ejercicio"}`;
   }

@@ -939,26 +939,26 @@ input, select, textarea { font-size: max(16px, 1em); }
   position: absolute; left: 50%; top: 40%; width: 190%; aspect-ratio: 1; margin-left: -95%; margin-top: -95%;
   border-radius: 50%; opacity: 0; transform: scale(.18);
   background: radial-gradient(circle,
-    transparent 26%,
-    color-mix(in srgb, var(--sa) 42%, transparent) 42%,
-    color-mix(in srgb, var(--sb) 24%, transparent) 52%,
-    color-mix(in srgb, var(--sb) 8%, transparent) 62%,
+    transparent 30%,
+    color-mix(in srgb, var(--sa) 16%, transparent) 44%,
+    color-mix(in srgb, var(--sb) 9%, transparent) 54%,
+    color-mix(in srgb, var(--sb) 3%, transparent) 63%,
     transparent 70%);
   will-change: transform, opacity;
 }
-.phase.live .pulse-field i:first-child { animation: wave var(--beat) cubic-bezier(.2, .6, .35, 1) infinite var(--beat-off); }
-.phase.live .pulse-field i:last-child { animation: wave var(--beat) cubic-bezier(.2, .6, .35, 1) infinite var(--beat-half); }
+.phase.live .pulse-field i:first-child { animation: wave var(--beat) cubic-bezier(.25, .1, .25, 1) infinite var(--beat-off); }
+.phase.live .pulse-field i:last-child { animation: wave var(--beat) cubic-bezier(.25, .1, .25, 1) infinite var(--beat-half); }
 .phase.live.tick .pulse-field i:last-child { display: none; }
 .phase.live.breathe .pulse-field i { animation-name: breathe-wave; }
 @keyframes wave {
-  0% { transform: scale(.14); opacity: 0; }
-  10% { opacity: 1; }
-  70% { opacity: .35; }
-  100% { transform: scale(1.1); opacity: 0; }
+  0% { transform: scale(.2); opacity: 0; }
+  18% { opacity: .9; }
+  65% { opacity: .3; }
+  100% { transform: scale(1); opacity: 0; }
 }
 @keyframes breathe-wave {
   0% { transform: scale(.35); opacity: 0; }
-  45% { opacity: .7; }
+  45% { opacity: .55; }
   100% { transform: scale(1.05); opacity: 0; }
 }
 /* en pausa todo queda quieto y apagado: la diferencia es la señal */
@@ -968,8 +968,8 @@ input, select, textarea { font-size: max(16px, 1em); }
 /* anillo fino que se llena en cada repetición */
 .rep-arc { position: absolute; inset: -9px; width: calc(100% + 18px); height: calc(100% + 18px); transform: rotate(-90deg); pointer-events: none; }
 .rep-arc circle {
-  fill: none; stroke: color-mix(in srgb, var(--sb) 80%, white); stroke-width: 2.6; stroke-linecap: round;
-  filter: drop-shadow(0 0 3px var(--sb));
+  fill: none; stroke: color-mix(in srgb, var(--sb) 70%, white); stroke-width: 1.6; stroke-linecap: round;
+  opacity: .75;
   stroke-dasharray: 100; stroke-dashoffset: 100; opacity: .9;
 }
 .phase.live.beat .rep-arc circle { animation: rep-fill var(--beat) linear infinite var(--beat-off); }
@@ -982,3 +982,18 @@ input, select, textarea { font-size: max(16px, 1em); }
   .phase.live .pulse-field i:first-child { opacity: .35; transform: scale(.8); }
   .phase.live.beat .rep-arc circle { animation: none; stroke-dashoffset: 0; opacity: .4; }
 }
+
+/* ---------- lado (siempre parte el derecho) ---------- */
+.set-info { gap: 8px; }
+.side-tag {
+  display: inline-flex; align-items: center; gap: 4px; padding: 4px 9px; border-radius: 999px;
+  font-size: 12px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: var(--text);
+  background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.16);
+}
+.side-tag.s2 { background: color-mix(in srgb, var(--sc) 22%, transparent); border-color: color-mix(in srgb, var(--sc) 45%, transparent); }
+.side-tag.flip { animation: item-in .3s var(--ease-out) both; }
+
+.phase-head .state-pill, .set-info { white-space: nowrap; }
+.side-row { display: flex; justify-content: center; margin: -2px 0 -4px; }
+.side-row .side-tag { font-size: 13px; padding: 6px 14px; letter-spacing: .08em; }
+.phase.morph > .side-row { animation: item-in .28s var(--ease-out) both .02s; }
