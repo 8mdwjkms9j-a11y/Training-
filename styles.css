@@ -1021,34 +1021,14 @@ input, select, textarea { font-size: max(16px, 1em); }
    ========================================================= */
 .pulse-field i:nth-child(4) { display: none; }
 .phase.liquid .pulse-field i:nth-child(n) {
-  display: block; opacity: 1; margin: 0; width: 110%; aspect-ratio: 1; border-radius: 50%;
+  display: block; opacity: 1; margin: 0; width: 165%; aspect-ratio: 1; border-radius: 50%;
   mix-blend-mode: screen;
-  animation: drift var(--dur, 11s) cubic-bezier(.45, .05, .55, .95) infinite alternate;
+  animation: drift var(--dur, 18s) cubic-bezier(.45, .05, .55, .95) infinite alternate;
 }
-.phase.liquid .pulse-field i:nth-child(1) {
-  left: -30%; top: -28%;
-  background:
-    radial-gradient(ellipse 46% 30% at 38% 44%, color-mix(in srgb, var(--sa) 48%, transparent), transparent 70%),
-    radial-gradient(ellipse 30% 42% at 66% 60%, color-mix(in srgb, var(--sa) 28%, transparent), transparent 72%);
-}
-.phase.liquid .pulse-field i:nth-child(2) {
-  left: 28%; top: 0%;
-  background:
-    radial-gradient(ellipse 40% 28% at 52% 40%, color-mix(in srgb, var(--sb) 42%, transparent), transparent 70%),
-    radial-gradient(ellipse 22% 36% at 30% 66%, color-mix(in srgb, var(--sb) 22%, transparent), transparent 75%);
-}
-.phase.liquid .pulse-field i:nth-child(3) {
-  left: -22%; top: 38%;
-  background:
-    radial-gradient(ellipse 44% 26% at 50% 50%, color-mix(in srgb, var(--sc) 40%, transparent), transparent 70%),
-    radial-gradient(ellipse 26% 20% at 72% 34%, color-mix(in srgb, var(--sc) 25%, transparent), transparent 76%);
-}
-.phase.liquid .pulse-field i:nth-child(4) {
-  left: 30%; top: 46%;
-  background:
-    radial-gradient(ellipse 34% 24% at 46% 52%, color-mix(in srgb, var(--sa) 28%, var(--sb) 10%), transparent 72%);
-  opacity: .8;
-}
+.phase.liquid .pulse-field i:nth-child(1) { left: -75%; top: -70%; background: radial-gradient(closest-side at 46% 50%, color-mix(in srgb, var(--sa) 36%, transparent) 0%, color-mix(in srgb, var(--sa) 31.0%, transparent) 14%, color-mix(in srgb, var(--sa) 23.8%, transparent) 28%, color-mix(in srgb, var(--sa) 16.6%, transparent) 42%, color-mix(in srgb, var(--sa) 10.4%, transparent) 56%, color-mix(in srgb, var(--sa) 5.4%, transparent) 70%, color-mix(in srgb, var(--sa) 2.2%, transparent) 84%, transparent 100%); }
+.phase.liquid .pulse-field i:nth-child(2) { left: -5%; top: -45%; background: radial-gradient(closest-side at 54% 48%, color-mix(in srgb, var(--sb) 30%, transparent) 0%, color-mix(in srgb, var(--sb) 25.8%, transparent) 14%, color-mix(in srgb, var(--sb) 19.8%, transparent) 28%, color-mix(in srgb, var(--sb) 13.8%, transparent) 42%, color-mix(in srgb, var(--sb) 8.7%, transparent) 56%, color-mix(in srgb, var(--sb) 4.5%, transparent) 70%, color-mix(in srgb, var(--sb) 1.8%, transparent) 84%, transparent 100%); }
+.phase.liquid .pulse-field i:nth-child(3) { left: -65%; top: -5%; background: radial-gradient(closest-side at 50% 54%, color-mix(in srgb, var(--sc) 28%, transparent) 0%, color-mix(in srgb, var(--sc) 24.1%, transparent) 14%, color-mix(in srgb, var(--sc) 18.5%, transparent) 28%, color-mix(in srgb, var(--sc) 12.9%, transparent) 42%, color-mix(in srgb, var(--sc) 8.1%, transparent) 56%, color-mix(in srgb, var(--sc) 4.2%, transparent) 70%, color-mix(in srgb, var(--sc) 1.7%, transparent) 84%, transparent 100%); }
+.phase.liquid .pulse-field i:nth-child(4) { left: -15%; top: 5%; background: radial-gradient(closest-side at 48% 46%, color-mix(in srgb, var(--sa) 18%, transparent) 0%, color-mix(in srgb, var(--sa) 15.5%, transparent) 14%, color-mix(in srgb, var(--sa) 11.9%, transparent) 28%, color-mix(in srgb, var(--sa) 8.3%, transparent) 42%, color-mix(in srgb, var(--sa) 5.2%, transparent) 56%, color-mix(in srgb, var(--sa) 2.7%, transparent) 70%, color-mix(in srgb, var(--sa) 1.1%, transparent) 84%, transparent 100%); }
 @keyframes drift {
   0%   { transform: translate(var(--x0), var(--y0)) rotate(var(--r0)) scale(var(--a0), var(--b0)); }
   33%  { transform: translate(var(--x1), var(--y1)) rotate(var(--r1)) scale(var(--a1), var(--b1)); }

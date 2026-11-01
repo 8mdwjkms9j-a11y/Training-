@@ -1894,13 +1894,13 @@ function liquidBlobs() {
   const t = session.timer;
   const elapsed = t ? Math.max(0, t.total - timerLeft()) : 0;
   return [0, 1, 2, 3].map(() => {
-    const dur = +r(9, 14);
+    const dur = +r(15, 22);
     const vars = [];
-    // 4 puntos del recorrido: posición, giro y estiramiento distinto en cada eje (forma orgánica)
+    // 4 puntos del recorrido: posición, giro suave y leve estiramiento (forma orgánica sin contornos)
     for (let k = 0; k < 4; k++) {
       vars.push(
-        `--x${k}:${r(-42, 42)}%`, `--y${k}:${r(-34, 34)}%`, `--r${k}:${r(-80, 80)}deg`,
-        `--a${k}:${r(0.7, 1.4)}`, `--b${k}:${r(0.6, 1.25)}`
+        `--x${k}:${r(-30, 30)}%`, `--y${k}:${r(-26, 26)}%`, `--r${k}:${r(-40, 40)}deg`,
+        `--a${k}:${r(0.88, 1.18)}`, `--b${k}:${r(0.8, 1.12)}`
       );
     }
     vars.push(`--dur:${dur}s`, `animation-delay:-${((elapsed + +r(0, dur)) % dur).toFixed(2)}s`);
