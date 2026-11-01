@@ -696,12 +696,18 @@ function ensurePlayback() {
       keepAlive.loop = true;
       keepAlive.setAttribute("playsinline", "");
       keepAlive.setAttribute("x-webkit-airplay", "deny");
+      // si el sistema pausa el audio de fondo (p. ej. al hablar), lo retomamos sin tocar el entrenamiento
+      keepAlive.addEventListener("pause", () => {
+        if (session && !keepAlive.dataset.stopped) setTimeout(() => keepAlive.play().catch(() => {}), 250);
+      });
     }
+    delete keepAlive.dataset.stopped;
     keepAlive.play().catch(() => {});
   } catch {}
 }
 function stopPlayback() {
   try {
+    if (keepAlive) keepAlive.dataset.stopped = "1";
     keepAlive?.pause();
   } catch {}
 }
@@ -767,8 +773,16 @@ function click(accent = true, vol = 0.7) {
   });
 }
 
+// iOS puede mandar "pausa"/"play" al panel Ahora suena cuando la voz o un cambio de
+// estado toman el audio. Esas órdenes no son tuyas: las ignoramos durante un momento.
+let ignoreMediaUntil = 0;
+function shieldMedia(ms) {
+  ignoreMediaUntil = Math.max(ignoreMediaUntil, Date.now() + ms);
+}
+
 function say(text) {
   if (!prefs.voice || !("speechSynthesis" in window)) return;
+  shieldMedia(Math.min(6000, 1800 + text.length * 90));
   try {
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
@@ -1263,6 +1277,7 @@ function scheduleTimerSounds() {
 }
 
 function timerStart(seconds) {
+  shieldMedia(1200);
   session.timer = { running: true, total: seconds, endsAt: Date.now() + seconds * 1000, remaining: seconds, lastBeep: null };
   scheduleTimerSounds();
   persist();
@@ -1493,6 +1508,7 @@ function logSet(entry) {
 }
 
 function beginWork(auto = false) {
+  shieldMedia(1500);
   cancelScheduled();
   session.phase = "work";
   session.timer = null;
@@ -1612,7 +1628,7 @@ function renderWorkout() {
     } else primary = `<button class="btn primary full big" data-act="startTimed">${icon("play")} Iniciar</button>`;
   } else if (hasMetro(ex)) {
     const m = session.metro;
-    center = `<button class="rep-counter ${m && m.running ? "metro-on" : ""}" id="repBtn" data-act="${m ? "metroToggle" : "repPlus"}" aria-label="${m ? "Pausar o seguir" : "Sumar repetición"}">
+    center = `<button class="rep-counter ${m && m.running ? "metro-on" : ""}" id="repBtn" data-act="${m ? (m.running ? "" : "metroToggle") : "repPlus"}" aria-label="${m ? (m.running ? "Conteo en curso" : "Seguir conteo") : "Sumar repetición"}">
         <span id="repNum">${session.reps}</span><small>/ ${ex.reps}</small></button>`;
     caption = `<span id="metroStatus">${m ? metroStatusText(ex) : "Toca el círculo para contar a mano"}</span>`;
     tools = m
@@ -2615,15 +2631,18 @@ function updateNowPlaying(force = false) {
     ensurePlayback();
     updateNowPlaying(true);
   };
+  const external = () => Date.now() < ignoreMediaUntil;
   h("play", () => {
-    if (isWorkoutPaused()) workoutTogglePause();
+    if (!external() && isWorkoutPaused()) workoutTogglePause();
     after();
   });
   h("pause", () => {
-    if (!isWorkoutPaused()) workoutTogglePause();
+    // pausa automática del sistema (voz, cambio de estado): no detener el entrenamiento
+    if (!external() && !isWorkoutPaused()) workoutTogglePause();
     after();
   });
   h("nexttrack", () => {
+    if (external()) return after();
     workoutPrimary();
     after();
   });
