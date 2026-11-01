@@ -462,7 +462,7 @@ let history = load(LS.history, []);
 let session = load(LS.session, null);
 let lastKg = load(LS.kg, {});
 let prefs = Object.assign(
-  { sound: true, voice: true, autoRest: true, week: "auto", prep: 10, autoStart: true, soloAudio: false },
+  { sound: true, voice: true, autoRest: true, week: "auto", prep: 10, autoStart: true, soloAudio: false, tilt: true },
   load(LS.prefs, {})
 );
 let lastTempo = load("entreno.tempo", {});
@@ -1117,7 +1117,7 @@ function renderHome() {
       ? `Semana ${wi + 1} de ${weeks.length}${freq ? ` · sesión ${Math.min((done || 0) + 1, freq)} de ${freq}` : ""}`
       : "Siguiente entrenamiento";
     const pct = session ? Math.round((session.i / session.steps.length) * 100) : 0;
-    hero = `<section class="hero ${session ? "is-live" : ""}">
+    hero = `<section class="hero tilt ${session ? "is-live" : ""}" id="hero"><span class="hero-sheen" aria-hidden="true"></span>
       <div class="eyebrow">${esc(eyebrow)}</div>
       <h1 class="hero-title">${esc(day.name)}</h1>
       <div class="hero-meta">
@@ -1175,6 +1175,7 @@ function renderHome() {
     ${otherDays}
     ${last}`;
 
+  setupTilt(document.getElementById("hero"));
   $app.querySelectorAll("[data-week]").forEach((b) =>
     b.addEventListener("click", () => {
       const i = +b.dataset.week;
@@ -1214,6 +1215,84 @@ function renderHome() {
       render();
     },
   });
+}
+
+
+// ============================================================
+//  INCLINACIÓN 3D DE LA TARJETA DEL INICIO (tipo Apple TV)
+//  Usa la orientación del teléfono (con permiso en iOS); sin permiso, el dedo.
+// ============================================================
+const tilt = { el: null, raf: 0, x: 0, y: 0, tx: 0, ty: 0, base: null, listening: false, touching: false };
+const TILT_MAX = 6; // grados
+
+function tiltPermissionNeeded() {
+  return typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function";
+}
+function onOrientation(e) {
+  if (tilt.touching || e.beta == null || e.gamma == null) return;
+  // posición neutra = como sostienes el teléfono; se adapta lentamente si cambias de postura
+  if (!tilt.base) tilt.base = { b: e.beta, g: e.gamma };
+  tilt.base.b += (e.beta - tilt.base.b) * 0.01;
+  tilt.base.g += (e.gamma - tilt.base.g) * 0.01;
+  const clamp = (v) => Math.max(-1, Math.min(1, v));
+  tilt.tx = clamp((e.gamma - tilt.base.g) / 18); // izquierda/derecha
+  tilt.ty = clamp((e.beta - tilt.base.b) / 18); // adelante/atrás
+}
+function listenOrientation() {
+  if (tilt.listening) return;
+  tilt.listening = true;
+  window.addEventListener("deviceorientation", onOrientation, { passive: true });
+}
+async function requestTiltPermission() {
+  if (!tiltPermissionNeeded()) return listenOrientation(), true;
+  try {
+    const r = await DeviceOrientationEvent.requestPermission();
+    if (r === "granted") {
+      localStorage.setItem("entreno.tiltGranted", "1");
+      listenOrientation();
+      return true;
+    }
+  } catch {}
+  return false;
+}
+function tiltLoop() {
+  if (!tilt.el || !tilt.el.isConnected) {
+    tilt.raf = 0;
+    return;
+  }
+  // suavizado: la tarjeta sigue al teléfono con inercia
+  tilt.x += (tilt.tx - tilt.x) * 0.08;
+  tilt.y += (tilt.ty - tilt.y) * 0.08;
+  const rx = (-tilt.y * TILT_MAX).toFixed(2), ry = (tilt.x * TILT_MAX).toFixed(2);
+  tilt.el.style.transform = `perspective(900px) rotateX(${rx}deg) rotateY(${ry}deg)`;
+  tilt.el.style.setProperty("--gx", `${(50 + tilt.x * 38).toFixed(1)}%`);
+  tilt.el.style.setProperty("--gy", `${(35 + tilt.y * 38).toFixed(1)}%`);
+  tilt.raf = requestAnimationFrame(tiltLoop);
+}
+function setupTilt(el) {
+  tilt.el = el;
+  if (!el || !prefs.tilt || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  if (!tiltPermissionNeeded() || localStorage.getItem("entreno.tiltGranted")) listenOrientation();
+  // tocar la tarjeta (fuera de los botones) pide el permiso la primera vez
+  el.addEventListener("click", (e) => {
+    if (!e.target.closest("button, a") && tiltPermissionNeeded() && !tilt.listening) requestTiltPermission();
+  });
+  // con el dedo: arrastrar sobre la tarjeta también la inclina
+  el.addEventListener("pointermove", (e) => {
+    if (e.pointerType === "mouse" && !e.buttons && tilt.listening) return;
+    const r = el.getBoundingClientRect();
+    tilt.touching = true;
+    tilt.tx = ((e.clientX - r.left) / r.width - 0.5) * 2;
+    tilt.ty = ((e.clientY - r.top) / r.height - 0.5) * 2;
+  });
+  const release = () => {
+    tilt.touching = false;
+    if (!tilt.listening) tilt.tx = tilt.ty = 0;
+  };
+  el.addEventListener("pointerleave", release);
+  el.addEventListener("pointerup", release);
+  el.addEventListener("pointercancel", release);
+  if (!tilt.raf) tilt.raf = requestAnimationFrame(tiltLoop);
 }
 
 // ---------- barra inferior ----------
@@ -2644,6 +2723,7 @@ function renderSettings() {
         ${opt("voice", "Avisos por voz (solo con Prioridad a Entreno)")}
         ${opt("autoRest", "Iniciar descanso automáticamente")}
         ${opt("autoStart", "Arrancar solo el ejercicio tras prepararse")}
+        ${opt("tilt", "Tarjeta del inicio con inclinación 3D al mover el teléfono")}
         ${opt("soloAudio", "Prioridad a Entreno: suena con el iPhone en silencio y muestra el panel en pantalla bloqueada y Apple Watch (pausa la música de otras apps)")}
       </div>
     </section>
@@ -2679,6 +2759,7 @@ function renderSettings() {
     c.addEventListener("change", () => {
       prefs[c.dataset.pref] = c.checked;
       save(LS.prefs, prefs);
+      if (c.dataset.pref === "tilt" && c.checked) requestTiltPermission();
       if (c.dataset.pref === "soloAudio") {
         ensurePlayback();
         updateNowPlaying(true);

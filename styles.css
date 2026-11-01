@@ -1060,3 +1060,25 @@ body.is-workout .topbar .icon-btn {
 }
 body.is-workout.nav-compact .topbar { transform: none; opacity: 1; pointer-events: none; }
 body.is-workout #app { padding-top: calc(var(--safe-top) + 58px); }
+
+/* =========================================================
+   TARJETA DEL INICIO CON INCLINACIÓN 3D (tipo Apple TV)
+   El degradado y un brillo de vidrio siguen la inclinación (--gx, --gy).
+   ========================================================= */
+.hero.tilt {
+  --gx: 50%; --gy: 35%;
+  transform-style: preserve-3d; will-change: transform;
+  background:
+    radial-gradient(120% 95% at calc(var(--gx) + 45%) calc(var(--gy) - 35%), color-mix(in srgb, var(--sa) 30%, transparent), transparent 58%),
+    radial-gradient(90% 70% at calc(100% - var(--gx)) calc(110% - var(--gy)), color-mix(in srgb, var(--sb) 10%, transparent), transparent 65%),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.01) 45%),
+    var(--surface);
+  box-shadow: var(--glass-hi), 0 24px 50px -28px rgba(0, 0, 0, 0.8);
+}
+.hero-sheen {
+  position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: 0;
+  background: radial-gradient(60% 45% at var(--gx) var(--gy), rgba(255, 255, 255, 0.09), transparent 70%);
+  mix-blend-mode: soft-light;
+}
+.hero.tilt > *:not(.hero-sheen) { position: relative; z-index: 1; }
+@media (prefers-reduced-motion: reduce) { .hero.tilt { transform: none !important; } }
