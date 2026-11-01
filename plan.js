@@ -25,7 +25,7 @@
 // ============================================================
 
 window.DEFAULT_PLAN = {
-  version: 4,
+  version: 5,
   name: "Pauta Noviembre",
   frequency: 2, // entrenamientos por semana
   weeks: [
@@ -53,17 +53,17 @@ window.DEFAULT_PLAN = {
         // ---------------- ACTIVACIÓN ----------------
         {
           block: "Activación", group: "Circuito glúteo con banda",
-          name: "Aperturas bilaterales con banda", sets: 1, reps: 30, tempo: 2, rest: 0,
+          name: "Aperturas bilaterales con banda", sets: 1, reps: 30, tempo: 1.5, rest: 0,
           notes: "De espalda en el suelo, talones apoyados y dedos del pie elevados."
         },
         {
           block: "Activación", group: "Circuito glúteo con banda",
-          name: "Aperturas unilaterales con banda", sets: 1, reps: 15, perSide: true, tempo: 2, rest: 0,
+          name: "Aperturas unilaterales con banda", sets: 1, reps: 15, perSide: true, tempo: 1.5, rest: 0,
           notes: "15 por pierna. Misma posición: talones apoyados, dedos elevados."
         },
         {
           block: "Activación", group: "Circuito glúteo con banda",
-          name: "Puente glúteo con banda", sets: 1, reps: 30, tempo: 2.5, rest: 0
+          name: "Puente glúteo con banda", sets: 1, reps: 30, tempo: 1.5, rest: 0
         },
         {
           block: "Activación", group: "Circuito glúteo con banda",
@@ -72,30 +72,30 @@ window.DEFAULT_PLAN = {
         },
         {
           block: "Activación",
-          name: "Dead bug fitball", sets: 3, reps: 10, perSide: true, alternate: true, tempo: 2.5, rest: 30,
+          name: "Dead bug fitball", sets: 3, reps: 10, perSide: true, alternate: true, tempo: 1.5, rest: 30,
           video: "https://www.youtube.com/watch?v=06VJ1qvZyfg",
           notes: "10 por lado × 3. Puede hacerse sin fitball."
         },
         {
           block: "Activación",
-          name: "Trabajo escapular · círculos de hombros", sets: 2, reps: 10, tempo: 2.5, rest: 15,
+          name: "Trabajo escapular · círculos de hombros", sets: 2, reps: 10, tempo: 1.5, rest: 15,
           notes: "Serie 1: 10 círculos hacia afuera. Serie 2: 10 hacia adentro."
         },
         {
           block: "Activación",
-          name: "Trabajo escapular · mantenciones I-Y-T", sets: 3, reps: 10, tempo: 3, rest: 15,
+          name: "Trabajo escapular · mantenciones I-Y-T", sets: 3, reps: 10, tempo: 1.5, rest: 15,
           notes: "Serie 1 en \"I\", serie 2 en \"Y\", serie 3 en \"T\". Luego contracciones."
         },
         {
           block: "Activación",
-          name: "Dominadas escapulares", sets: "auto", reps: 8, tempo: 3, rest: 60,
+          name: "Dominadas escapulares", sets: "auto", reps: 8, tempo: 1.5, rest: 60,
           video: "https://www.youtube.com/shorts/I_N7m8WqvOY"
         },
 
         // ---------------- MOVILIDAD ----------------
         {
           block: "Movilidad", group: "Movilidad",
-          name: "Pancake suelo", sets: "auto", reps: 6, tempo: 5, rest: 0,
+          name: "Pancake suelo", sets: "auto", reps: 6, tempo: 1.5, rest: 0,
           video: "https://www.youtube.com/watch?v=UYsvnlpSLdw", start: "3:06"
         },
         {
@@ -106,12 +106,12 @@ window.DEFAULT_PLAN = {
         },
         {
           block: "Movilidad", group: "Movilidad",
-          name: "Pancake pared", sets: "auto", reps: 6, tempo: 5, rest: 0,
+          name: "Pancake pared", sets: "auto", reps: 6, tempo: 1.5, rest: 0,
           video: "https://www.youtube.com/watch?v=UYsvnlpSLdw", start: "3:06"
         },
         {
           block: "Movilidad", group: "Movilidad",
-          name: "Leg lift pancake", sets: "auto", reps: 6, tempo: 3, rest: 45,
+          name: "Leg lift pancake", sets: "auto", reps: 6, tempo: 1.5, rest: 45,
           video: "https://www.youtube.com/watch?v=UYsvnlpSLdw", start: "6:47"
         },
 

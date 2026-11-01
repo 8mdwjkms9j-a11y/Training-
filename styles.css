@@ -946,9 +946,10 @@ input, select, textarea { font-size: max(16px, 1em); }
     transparent 70%);
   will-change: transform, opacity;
 }
-.phase.live .pulse-field i:first-child { animation: wave var(--beat) cubic-bezier(.25, .1, .25, 1) infinite var(--beat-off); }
-.phase.live .pulse-field i:last-child { animation: wave var(--beat) cubic-bezier(.25, .1, .25, 1) infinite var(--beat-half); }
-.phase.live.tick .pulse-field i:last-child { display: none; }
+.pulse-field i:nth-child(3) { display: none; }
+.phase.live .pulse-field i:nth-child(1) { animation: wave var(--beat) cubic-bezier(.25, .1, .25, 1) infinite var(--beat-off); }
+.phase.live .pulse-field i:nth-child(2) { animation: wave var(--beat) cubic-bezier(.25, .1, .25, 1) infinite var(--beat-half); }
+.phase.live.tick .pulse-field i:nth-child(2) { display: none; }
 .phase.live.breathe .pulse-field i { animation-name: breathe-wave; }
 @keyframes wave {
   0% { transform: scale(.2); opacity: 0; }
@@ -1010,3 +1011,37 @@ input, select, textarea { font-size: max(16px, 1em); }
 .side-in.flip { animation: center-in .32s var(--ease-spring) both; }
 
 .rep-counter .side-in { width: 30px; height: 30px; margin-top: 6px; font: 700 17px/1 var(--font-display); font-style: normal; color: var(--text); letter-spacing: 0; }
+
+/* =========================================================
+   DESCANSO / PREPÁRATE: líquido lento
+   Tres manchas de luz con los colores del estado se desplazan muy lento,
+   cada una con su propio recorrido al azar. Solo transform: liviano.
+   ========================================================= */
+.phase.liquid .pulse-field i:nth-child(n) {
+  display: block; opacity: 1; margin: 0; width: 120%; aspect-ratio: 1; border-radius: 50%;
+  animation: drift var(--dur, 20s) ease-in-out infinite alternate;
+}
+.phase.liquid .pulse-field i:nth-child(1) {
+  left: -35%; top: -30%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--sa) 30%, transparent) 0%, color-mix(in srgb, var(--sa) 13%, transparent) 40%, transparent 70%);
+}
+.phase.liquid .pulse-field i:nth-child(2) {
+  left: 25%; top: 5%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--sb) 26%, transparent) 0%, color-mix(in srgb, var(--sb) 11%, transparent) 42%, transparent 70%);
+}
+.phase.liquid .pulse-field i:nth-child(3) {
+  left: -20%; top: 40%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--sc) 24%, transparent) 0%, color-mix(in srgb, var(--sc) 10%, transparent) 42%, transparent 70%);
+}
+@keyframes drift {
+  0%   { transform: translate(var(--x0), var(--y0)) scale(var(--s0)); }
+  50%  { transform: translate(var(--x1), var(--y1)) scale(var(--s1)); }
+  100% { transform: translate(var(--x2), var(--y2)) scale(var(--s2)); }
+}
+/* descanso en pausa: el líquido se queda quieto y más tenue */
+.phase.still.liquid .pulse-field { opacity: .45; }
+.phase.still.liquid .pulse-field i:nth-child(n) { animation-play-state: paused; }
+
+@media (prefers-reduced-motion: reduce) {
+  .phase.liquid .pulse-field i:nth-child(n) { animation: none !important; }
+}

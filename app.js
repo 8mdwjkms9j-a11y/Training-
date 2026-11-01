@@ -466,6 +466,12 @@ let prefs = Object.assign(
   load(LS.prefs, {})
 );
 let lastTempo = load("entreno.tempo", {});
+// Todos los conteos parten en 1,5 s por repetición: se reinician una vez los ritmos guardados antes.
+if (!localStorage.getItem("entreno.tempo.v15")) {
+  lastTempo = {};
+  save("entreno.tempo", lastTempo);
+  localStorage.setItem("entreno.tempo.v15", "1");
+}
 
 // ---------- utilidades ----------
 const esc = (s) =>
@@ -1390,7 +1396,7 @@ function onTimerDone() {
 
 // ---------- metrónomo (repeticiones guiadas por pitido) ----------
 const hasMetro = (ex) => !ex.time && +ex.reps > 0 && +ex.tempo > 0;
-const tempoOf = (ex) => +(lastTempo[ex.name] ?? ex.tempo) || 3;
+const tempoOf = (ex) => +(lastTempo[ex.name] ?? ex.tempo) || 1.5;
 const metroBeats = (ex) => +ex.reps * (ex.alternate ? 2 : 1);
 const metroSides = (ex) => (ex.perSide && !ex.alternate ? 2 : 1);
 
@@ -1718,7 +1724,7 @@ function renderWorkout() {
     </div>
 
     <section class="phase ${pulse.cls}" style="${pulse.style}">
-      <div class="pulse-field" aria-hidden="true"><i></i><i></i></div>
+      <div class="pulse-field" aria-hidden="true">${[0, 1, 2].map((k) => `<i style="${pulse.blobs?.[k] || ""}"></i>`).join("")}</div>
       <header class="phase-head">
         <div class="state-pill" role="status"><i></i><span id="stateTxt">${STATE_LABEL[state] || ""}</span></div>
         <div class="set-info">${setTxt}${setDotsHtml}</div>
@@ -1849,11 +1855,8 @@ function pulseFor(ex) {
   let beat = 0, offset = 0, mode = "";
   if (session.phase === "rest") {
     const t = session.timer;
-    if (t && t.running) {
-      beat = state === "rest" ? 4 : 1;
-      offset = ((t.total - timerLeft()) % beat) || 0;
-      mode = state === "rest" ? "breathe" : "tick";
-    }
+    if (t && t.running) return { cls: "live liquid", style: "", blobs: liquidBlobs() };
+    return { cls: "still liquid", style: "", blobs: liquidBlobs() };
   } else if (session.metro) {
     const m = session.metro;
     if (m.running && !m.switchUntil) {
@@ -1880,6 +1883,26 @@ function pulseFor(ex) {
   return { cls: `live ${mode}`, style: `--beat:${beat}s;--beat-off:-${offset.toFixed(3)}s;--beat-half:-${(offset + beat / 2).toFixed(3)}s` };
 }
 
+
+// Manchas de luz que se mueven lento y al azar dentro de la tarjeta (descanso / prepárate).
+// Recorridos aleatorios pero estables durante el mismo descanso (semilla = paso),
+// y continuos aunque se redibuje la tarjeta (el desfase sale del tiempo transcurrido).
+function liquidBlobs() {
+  let seed = (session.i + 1) * 9301 + (session.dayIndex + 1) * 49297;
+  const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280);
+  const r = (a, b) => (a + (b - a) * rnd()).toFixed(1);
+  const t = session.timer;
+  const elapsed = t ? Math.max(0, t.total - timerLeft()) : 0;
+  return [0, 1, 2].map(() => {
+    const dur = +r(16, 26);
+    return [
+      `--x0:${r(-28, 28)}%`, `--y0:${r(-22, 22)}%`, `--s0:${r(0.85, 1.15)}`,
+      `--x1:${r(-28, 28)}%`, `--y1:${r(-22, 22)}%`, `--s1:${r(0.9, 1.25)}`,
+      `--x2:${r(-28, 28)}%`, `--y2:${r(-22, 22)}%`, `--s2:${r(0.8, 1.1)}`,
+      `--dur:${dur}s`, `animation-delay:-${((elapsed + +r(0, dur)) % dur).toFixed(2)}s`,
+    ].join(";");
+  });
+}
 
 // La onda nace exactamente del centro del anillo/contador (no del centro de la tarjeta)
 function placePulse() {
