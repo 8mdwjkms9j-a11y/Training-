@@ -144,7 +144,22 @@ function openSheet(opts) {
     o.onMount?.(sheet, close);
   };
 
-  wrap.querySelector(".sheet-backdrop").addEventListener("click", () => close());
+  // Cerrar tocando afuera, solo si es un toque intencional:
+  // - el toque empieza y termina en el fondo (no un arrastre desde el panel)
+  // - no hubo toques dentro del panel en el último ~0,6 s (toques rápidos que se escapan)
+  // - la pantalla no está agrandada con zoom
+  const backdrop = wrap.querySelector(".sheet-backdrop");
+  let lastInside = 0, downOnBackdrop = false;
+  sheet.addEventListener("pointerdown", () => (lastInside = Date.now()));
+  sheet.addEventListener("click", () => (lastInside = Date.now()));
+  backdrop.addEventListener("pointerdown", () => (downOnBackdrop = true));
+  backdrop.addEventListener("click", () => {
+    const zoomed = window.visualViewport && window.visualViewport.scale > 1.02;
+    const recent = Date.now() - lastInside < 600;
+    const ok = downOnBackdrop && !zoomed && !recent;
+    downOnBackdrop = false;
+    if (ok) close();
+  });
   setContent(opts, false);
   sheetCtl = { wrap, sheet, setContent };
   closeSheet = close;
@@ -153,6 +168,7 @@ function openSheet(opts) {
   // arrastrar hacia abajo para cerrar
   let y0 = null, dy = 0;
   sheet.addEventListener("touchstart", (e) => {
+    if (e.target.closest("button, input, label, a, iframe, video, .kg-stepper")) return;
     if (sbody.scrollTop > 0 && !e.target.closest(".sheet-head, .sheet-grab")) return;
     y0 = e.touches[0].clientY;
     dy = 0;

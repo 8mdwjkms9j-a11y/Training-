@@ -394,7 +394,7 @@ body.nav-compact .tabbar .ico { transform: translateY(7px) scale(1.08); }
 
 textarea {
   width: 100%; min-height: 55vh; background: #0b0c0e; color: #dedbd4; border: 1px solid var(--line);
-  border-radius: 12px; padding: 12px; font: 13px/1.45 ui-monospace, Menlo, monospace;
+  border-radius: 12px; padding: 12px; font: 16px/1.45 ui-monospace, Menlo, monospace;
 }
 code { background: var(--surface-2); padding: 1px 5px; border-radius: 5px; font-size: 12px; }
 .error { color: var(--danger); margin-top: 8px; font-size: 14px; }
@@ -918,3 +918,10 @@ body.is-workout .workout-foot { padding-bottom: 0; }
 .effort-last { margin: 0; font-size: 13px; color: var(--muted); }
 .effort-last b { color: var(--text); }
 .kg-saved { color: var(--ok); font-weight: 600; }
+
+/* ---------- sin zoom accidental ----------
+   touch-action: manipulation desactiva el "doble toque para zoom" (los toques rápidos
+   cuentan como toques); los campos usan ≥16 px para que iOS no haga zoom al enfocarlos. */
+html, body, button, a, input, label, .sheet, .tabbar { touch-action: manipulation; }
+input, select, textarea { font-size: max(16px, 1em); }
+.kg-btn, .ibtn, .btn, .rep-counter, .tempo-ctl button { -webkit-user-select: none; user-select: none; }
