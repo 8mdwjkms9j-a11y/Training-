@@ -462,10 +462,13 @@ let history = load(LS.history, []);
 let session = load(LS.session, null);
 let lastKg = load(LS.kg, {});
 let prefs = Object.assign(
-  { sound: true, voice: true, autoRest: true, week: "auto", prep: 10, autoStart: true },
+  { sound: true, voice: true, autoRest: true, week: "auto", prep: 10, autoStart: true, soloAudio: false },
   load(LS.prefs, {})
 );
 let lastTempo = load("entreno.tempo", {});
+try {
+  if (navigator.audioSession) navigator.audioSession.type = "ambient";
+} catch {}
 // Todos los conteos parten en 1,5 s por repetición: se reinician una vez los ritmos guardados antes.
 if (!localStorage.getItem("entreno.tempo.v15")) {
   lastTempo = {};
@@ -697,10 +700,19 @@ function silentWavUrl() {
   return URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
 }
 
-function ensurePlayback() {
+// Dos modos de audio:
+//  · Mezclar (por defecto): los pitidos suenan encima de tu música sin pausarla.
+//    iOS los silencia si el iPhone está en modo silencio.
+//  · Prioridad a Entreno (opcional): suena aunque esté en silencio y muestra el panel
+//    "Ahora suena" (pantalla bloqueada / Apple Watch), pero iOS pausa la música de otras apps.
+function setAudioSessionType() {
   try {
-    if (navigator.audioSession) navigator.audioSession.type = "playback";
+    if (navigator.audioSession) navigator.audioSession.type = prefs.soloAudio && session ? "playback" : "ambient";
   } catch {}
+}
+function ensurePlayback() {
+  setAudioSessionType();
+  if (!prefs.soloAudio) return stopPlayback();
   try {
     if (!keepAlive) {
       keepAlive = new Audio(silentWavUrl());
@@ -709,7 +721,7 @@ function ensurePlayback() {
       keepAlive.setAttribute("x-webkit-airplay", "deny");
       // si el sistema pausa el audio de fondo (p. ej. al hablar), lo retomamos sin tocar el entrenamiento
       keepAlive.addEventListener("pause", () => {
-        if (session && !keepAlive.dataset.stopped) setTimeout(() => keepAlive.play().catch(() => {}), 250);
+        if (prefs.soloAudio && session && !keepAlive.dataset.stopped) setTimeout(() => keepAlive.play().catch(() => {}), 250);
       });
     }
     delete keepAlive.dataset.stopped;
@@ -724,10 +736,10 @@ function stopPlayback() {
 }
 
 function unlockAudio() {
+  setAudioSessionType();
   unlockSfx();
   try {
-    if (session) ensurePlayback();
-    else if (navigator.audioSession) navigator.audioSession.type = "playback";
+    if (session && prefs.soloAudio) ensurePlayback();
   } catch {}
   try {
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
@@ -823,10 +835,16 @@ function unlockSfx() {
 }
 function sfx(kind) {
   if (!prefs.sound) return;
+  // Sin la API de sesión de audio, un <audio> tomaría el control y pausaría tu música:
+  // en ese caso usamos el motor Web Audio, que se mezcla.
+  if (!navigator.audioSession && !prefs.soloAudio) {
+    const [f, d, n, v] = SFX[kind];
+    return beep(f, d, n, v);
+  }
   try {
     const a = sfxEl(kind);
     a.muted = false;
-    a.currentTime = 0;
+    if (a.currentTime > 0) a.currentTime = 0;
     const p = a.play();
     if (p && p.catch) p.catch(() => {
       const [f, d, n, v] = SFX[kind];
@@ -849,13 +867,17 @@ function shieldMedia(ms) {
 function say(text) {
   if (!prefs.voice || !("speechSynthesis" in window)) return;
   shieldMedia(Math.min(6000, 1800 + text.length * 90));
-  try {
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = "es-ES";
-    u.rate = 1.05;
-    speechSynthesis.speak(u);
-  } catch {}
+  // se habla un instante después del cambio de pantalla: primero se dibuja, luego se habla
+  clearTimeout(say.t);
+  say.t = setTimeout(() => {
+    try {
+      if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "es-ES";
+      u.rate = 1.05;
+      speechSynthesis.speak(u);
+    } catch {}
+  }, 140);
 }
 
 function buzz(pattern) {
@@ -1747,7 +1769,7 @@ function renderWorkout() {
     </nav>
   `;
 
-  placePulse();
+  requestAnimationFrame(placePulse);
   // solo vuelve arriba al cambiar de ejercicio (evita saltos en cada redibujo)
   if (renderWorkout.lastEx !== `${session.dayIndex}:${st.ex}`) {
     renderWorkout.lastEx = `${session.dayIndex}:${st.ex}`;
@@ -1894,7 +1916,7 @@ function liquidBlobs() {
   const t = session.timer;
   const elapsed = t ? Math.max(0, t.total - timerLeft()) : 0;
   return [0, 1, 2, 3].map(() => {
-    const dur = +r(15, 22);
+    const dur = +r(10, 14);
     const vars = [];
     // 4 puntos del recorrido: posición, giro suave y leve estiramiento (forma orgánica sin contornos)
     for (let k = 0; k < 4; k++) {
@@ -2585,6 +2607,7 @@ function renderSettings() {
         ${opt("voice", "Avisos por voz")}
         ${opt("autoRest", "Iniciar descanso automáticamente")}
         ${opt("autoStart", "Arrancar solo el ejercicio tras prepararse")}
+        ${opt("soloAudio", "Prioridad a Entreno: suena con el iPhone en silencio y muestra el panel en pantalla bloqueada y Apple Watch (pausa la música de otras apps)")}
       </div>
     </section>
     <section class="section">
@@ -2596,8 +2619,8 @@ function renderSettings() {
       </div>
       <p class="muted small">Cuenta regresiva para acomodarte antes de cada ejercicio nuevo. Si el descanso de la pauta es más largo, se usa ese.</p>
       <button class="btn ghost full mt" data-act="test">Probar sonido</button>
-      <p class="muted small">Suenan solo: la cuenta 3-2-1 de "Prepárate", el inicio y el término de cada ejercicio (y de cada lado), y el final del entrenamiento. Funcionan aunque el iPhone esté en silencio.</p>
-      <p class="muted small">Durante el entrenamiento verás el ejercicio, las repeticiones o el tiempo y lo que sigue en <b>Ahora suena</b>: pantalla bloqueada, Dynamic Island y Apple Watch. Desde ahí puedes <b>pausar</b> (⏯) o pasar a lo <b>siguiente</b> (⏭).</p>
+      <p class="muted small">Suenan solo: la cuenta 3-2-1 de "Prepárate", el inicio y el término de cada ejercicio (y de cada lado), y el final del entrenamiento. Por defecto se mezclan con tu música sin pausarla; si el iPhone está en silencio no se escuchan (activa "Prioridad a Entreno" para eso).</p>
+      <p class="muted small">Con <b>Prioridad a Entreno</b> verás el ejercicio y lo que sigue en <b>Ahora suena</b> (pantalla bloqueada, Dynamic Island y Apple Watch) y podrás pausar (⏯) o pasar a lo siguiente (⏭) desde ahí.</p>
     </section>
     <section class="section">
       <div class="section-head"><h2>App</h2></div>
@@ -2619,6 +2642,10 @@ function renderSettings() {
     c.addEventListener("change", () => {
       prefs[c.dataset.pref] = c.checked;
       save(LS.prefs, prefs);
+      if (c.dataset.pref === "soloAudio") {
+        ensurePlayback();
+        updateNowPlaying(true);
+      }
     })
   );
   bindActs({
@@ -2719,7 +2746,7 @@ let npAt = 0;
 function updateNowPlaying(force = false) {
   if (!("mediaSession" in navigator)) return;
   const ms = navigator.mediaSession;
-  if (!session) {
+  if (!session || !prefs.soloAudio) {
     if (npKey) {
       try {
         ms.metadata = null;
@@ -2736,12 +2763,9 @@ function updateNowPlaying(force = false) {
     title = `${STATE_LABEL[state]} · ${ex.name}`;
     artist = `Sigue: ${setTxt}`;
   } else {
-    let prog;
-    if (ex.time) prog = `${ex.time} s`;
-    else if (session.metro?.switchUntil) prog = "Cambia de lado";
-    else prog = `${session.reps}/${ex.reps || "–"}`;
     const sd = currentSide(ex, st);
-    title = `${prog} · ${ex.name}${sd ? ` · ${sd === 1 ? "R" : "L"}` : ""}`;
+    const prog = ex.time ? `${ex.time} s` : `${ex.reps || ""} reps`;
+    title = `${ex.name}${sd ? ` · ${sd === 1 ? "R" : "L"}` : ""} · ${prog}`;
     const nxt = session.steps.slice(session.i + 1).find((x) => x.ex !== st.ex);
     artist = `${setTxt}${nxt ? ` · Sigue: ${day.exercises[nxt.ex].name}` : " · Último ejercicio"}`;
   }
@@ -2841,3 +2865,5 @@ if (session && (!session.steps || !plan.days[session.dayIndex])) {
 }
 render();
 checkForUpdate();
+// prepara los sonidos en un momento libre, para que "Empezar" responda al instante
+(window.requestIdleCallback || ((f) => setTimeout(f, 1200)))(() => Object.keys(SFX).forEach(sfxEl));

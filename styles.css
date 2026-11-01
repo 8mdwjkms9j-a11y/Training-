@@ -944,7 +944,7 @@ input, select, textarea { font-size: max(16px, 1em); }
     color-mix(in srgb, var(--sb) 9%, transparent) 54%,
     color-mix(in srgb, var(--sb) 3%, transparent) 63%,
     transparent 70%);
-  will-change: transform, opacity;
+  will-change: transform, opacity; backface-visibility: hidden;
 }
 .pulse-field i:nth-child(3) { display: none; }
 .phase.live .pulse-field i:nth-child(1) { animation: wave var(--beat) cubic-bezier(.25, .1, .25, 1) infinite var(--beat-off); }
@@ -1022,8 +1022,8 @@ input, select, textarea { font-size: max(16px, 1em); }
 .pulse-field i:nth-child(4) { display: none; }
 .phase.liquid .pulse-field i:nth-child(n) {
   display: block; opacity: 1; margin: 0; width: 165%; aspect-ratio: 1; border-radius: 50%;
-  mix-blend-mode: screen;
-  animation: drift var(--dur, 18s) cubic-bezier(.45, .05, .55, .95) infinite alternate;
+  animation: drift var(--dur, 12s) cubic-bezier(.45, .05, .55, .95) infinite alternate;
+  will-change: transform; backface-visibility: hidden;
 }
 .phase.liquid .pulse-field i:nth-child(1) { left: -75%; top: -70%; background: radial-gradient(closest-side at 46% 50%, color-mix(in srgb, var(--sa) 36%, transparent) 0%, color-mix(in srgb, var(--sa) 31.0%, transparent) 14%, color-mix(in srgb, var(--sa) 23.8%, transparent) 28%, color-mix(in srgb, var(--sa) 16.6%, transparent) 42%, color-mix(in srgb, var(--sa) 10.4%, transparent) 56%, color-mix(in srgb, var(--sa) 5.4%, transparent) 70%, color-mix(in srgb, var(--sa) 2.2%, transparent) 84%, transparent 100%); }
 .phase.liquid .pulse-field i:nth-child(2) { left: -5%; top: -45%; background: radial-gradient(closest-side at 54% 48%, color-mix(in srgb, var(--sb) 30%, transparent) 0%, color-mix(in srgb, var(--sb) 25.8%, transparent) 14%, color-mix(in srgb, var(--sb) 19.8%, transparent) 28%, color-mix(in srgb, var(--sb) 13.8%, transparent) 42%, color-mix(in srgb, var(--sb) 8.7%, transparent) 56%, color-mix(in srgb, var(--sb) 4.5%, transparent) 70%, color-mix(in srgb, var(--sb) 1.8%, transparent) 84%, transparent 100%); }
@@ -1042,3 +1042,6 @@ input, select, textarea { font-size: max(16px, 1em); }
 @media (prefers-reduced-motion: reduce) {
   .phase.liquid .pulse-field i:nth-child(n) { animation: none !important; }
 }
+
+/* rendimiento: la capa de efectos se compone aparte de la tarjeta de vidrio */
+.pulse-field { contain: strict; transform: translateZ(0); }
