@@ -77,38 +77,78 @@ window.addEventListener("scroll", resetWindowScroll, { passive: true });
 
 // ---------- panel inferior (bottom sheet) ----------
 let closeSheet = null;
-function openSheet({ title, subtitle = "", body, onClose }) {
-  closeSheet?.(true);
+let sheetCtl = null; // { wrap, sheet, setContent }
+/*
+  Patrón de interacción: todo detalle secundario se abre en este panel inferior.
+  Si ya hay uno abierto, se reemplaza su contenido (con "‹ volver" opcional) en vez de apilar.
+  opts: { title, subtitle, body, footer, back, onMount(el, close), onClose }
+*/
+function openSheet(opts) {
+  if (sheetCtl && sheetCtl.wrap.isConnected) {
+    sheetCtl.setContent(opts, true);
+    return closeSheet;
+  }
   const wrap = document.createElement("div");
   wrap.className = "sheet-wrap";
   wrap.innerHTML = `
     <div class="sheet-backdrop" data-close></div>
-    <section class="sheet" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+    <section class="sheet" role="dialog" aria-modal="true">
       <div class="sheet-grab" aria-hidden="true"></div>
-      <header class="sheet-head">
-        <div><h3>${esc(title)}</h3>${subtitle ? `<small>${subtitle}</small>` : ""}</div>
-        <button class="sheet-x" data-close aria-label="Cerrar">${icon("close")}</button>
-      </header>
-      <div class="sheet-body">${body}</div>
+      <header class="sheet-head"></header>
+      <div class="sheet-body"></div>
+      <footer class="sheet-foot"></footer>
     </section>`;
   $shell.appendChild(wrap);
   document.body.classList.add("sheet-open");
   const sheet = wrap.querySelector(".sheet");
+  const shead = wrap.querySelector(".sheet-head");
   const sbody = wrap.querySelector(".sheet-body");
-  requestAnimationFrame(() => requestAnimationFrame(() => wrap.classList.add("open")));
+  const sfoot = wrap.querySelector(".sheet-foot");
+  let current = opts;
 
   const close = (instant = false) => {
     if (!wrap.isConnected) return;
     closeSheet = null;
+    sheetCtl = null;
     document.body.classList.remove("sheet-open");
-    onClose?.();
-    if (instant) return wrap.remove();
+    current.onClose?.();
+    if (instant === true) return wrap.remove();
     wrap.classList.remove("open");
     sheet.style.transform = "";
-    setTimeout(() => wrap.remove(), 380);
+    setTimeout(() => wrap.remove(), 300);
   };
+
+  const setContent = (o, animate) => {
+    const prev = current;
+    current = o;
+    if (animate && prev !== o) prev.onClose?.();
+    sheet.setAttribute("aria-label", o.title || "");
+    shead.innerHTML = `
+      ${o.back ? `<button class="sheet-back" data-back aria-label="Volver">${icon("back")}</button>` : ""}
+      <div class="sheet-title"><h3>${esc(o.title || "")}</h3>${o.subtitle ? `<small>${o.subtitle}</small>` : ""}</div>
+      <button class="sheet-x" data-close aria-label="Cerrar">${icon("close")}</button>`;
+    sbody.innerHTML = o.body || "";
+    sbody.hidden = !o.body;
+    sfoot.innerHTML = o.footer || "";
+    sfoot.hidden = !o.footer;
+    sbody.scrollTop = 0;
+    shead.querySelector("[data-close]").addEventListener("click", () => close());
+    shead.querySelector("[data-back]")?.addEventListener("click", () => o.back());
+    if (animate) {
+      [shead, sbody, sfoot].forEach((el) => {
+        el.classList.remove("swap");
+        void el.offsetWidth;
+        el.classList.add("swap");
+      });
+    }
+    o.onMount?.(sheet, close);
+  };
+
+  wrap.querySelector(".sheet-backdrop").addEventListener("click", () => close());
+  setContent(opts, false);
+  sheetCtl = { wrap, sheet, setContent };
   closeSheet = close;
-  wrap.querySelectorAll("[data-close]").forEach((el) => el.addEventListener("click", () => close()));
+  requestAnimationFrame(() => requestAnimationFrame(() => wrap.classList.add("open")));
 
   // arrastrar hacia abajo para cerrar
   let y0 = null, dy = 0;
@@ -133,15 +173,106 @@ function openSheet({ title, subtitle = "", body, onClose }) {
   return close;
 }
 
-function techSheet(ex, wk) {
+function techSheet(ex, wk, { back } = {}) {
   const chips = [exTarget(ex, wk)].filter(Boolean).map((t) => `<span class="sheet-chip">${esc(t)}</span>`).join("");
   openSheet({
     title: ex.name,
     subtitle: [...new Set([ex.block, ex.group && ex.group.length > 1 ? ex.group : ex.group ? "Superserie " + ex.group : ""].filter(Boolean))].map(esc).join(" · "),
+    back,
     body: `
-      <div class="sheet-chips">${chips}</div>
+      <div class="sheet-chips">${chips}${ex.rpe ? `<span class="sheet-chip rpe">RPE ${esc(ex.rpe)}</span>` : ""}</div>
       ${ex.notes ? `<p class="sheet-notes">${esc(ex.notes)}</p>` : ""}
       <div class="sheet-video">${videoHtml(ex)}</div>`,
+  });
+}
+
+// Lista de ejercicios del día (agrupada por bloques y circuitos)
+function dayListHtml(day, wk) {
+  let html = "";
+  let lastBlock = null;
+  for (const g of groupsOf(day)) {
+    const first = day.exercises[g.start];
+    if (first.block && first.block !== lastBlock) {
+      html += `<h3 class="block-title">${esc(first.block)}</h3>`;
+      lastBlock = first.block;
+    }
+    const label = groupLabel(g);
+    const members = day.exercises.slice(g.start, g.end);
+    const rounds = Math.max(...members.map((e) => setsOf(e, wk)));
+    const items = members
+      .map((ex, k) => {
+        const i = g.start + k;
+        const tag = g.name ? (g.name.length === 1 ? `${g.name}${k + 1}` : k + 1) : i + 1;
+        return `
+        <button class="ex-row ${g.name ? "in-group" : "card"}" data-ex="${i}" aria-label="${esc(ex.name)}: ver técnica">
+          <span class="num">${esc(tag)}</span>
+          <span class="grow">
+            <span class="card-title">${esc(ex.name)}</span>
+            <span class="muted block small">${esc(exTarget(ex, wk))}</span>
+          </span>
+          ${icon("chevron")}
+        </button>`;
+      })
+      .join("");
+    if (label) {
+      const restR = +members[members.length - 1].rest || 0;
+      html += `<div class="card group-card">
+        <div class="group-head row between"><b>${esc(label)}</b><span class="muted small">${rounds} ${rounds === 1 ? "ronda" : "rondas"}${restR ? ` · descanso ${restR} s` : ""}</span></div>
+        ${items}
+      </div>`;
+    } else html += items;
+  }
+  return `<div class="list">${html}</div>`;
+}
+
+function daySheet(di) {
+  const day = plan.days[di];
+  if (!day) return;
+  const wk = weekSets();
+  const live = session && session.dayIndex === di;
+  openSheet({
+    title: day.name,
+    subtitle: `${wk} series · ${day.exercises.length} ejercicios · ~${estimateMin(day, wk)} min`,
+    body: dayListHtml(day, wk),
+    footer: `<button class="btn primary full big" data-act="go">${icon("play")} ${live ? "Continuar entrenamiento" : "Empezar"}</button>`,
+    onMount: (el, close) => {
+      el.querySelectorAll("[data-ex]").forEach((b) =>
+        b.addEventListener("click", () => techSheet(day.exercises[+b.dataset.ex], wk, { back: () => daySheet(di) }))
+      );
+      el.querySelector('[data-act="go"]').addEventListener("click", async () => {
+        close(true);
+        if (live) return go("workout");
+        if (session && !(await ask("Hay otro entrenamiento en curso. ¿Descartarlo y empezar este?", "Empezar"))) return;
+        startSession(di);
+      });
+    },
+  });
+}
+
+function rpeSheet() {
+  const rows = (plan.rpe || [])
+    .map(([r, d]) => `<div class="row between hist-row"><b class="rpe-n">${esc(r)}</b><span class="grow">${esc(d)}</span></div>`)
+    .join("");
+  openSheet({
+    title: "Tabla RPE",
+    subtitle: "RIR = repeticiones que te quedan en reserva",
+    body: `<div>${rows}</div>`,
+  });
+}
+
+function entrySheet(idx) {
+  const e = history[idx];
+  if (!e) return;
+  openSheet({
+    title: e.dayName,
+    subtitle: `${fmtDate(e.date)} · ${fmt(e.duration)}`,
+    body: `${statsTiles(e)}<div class="sheet-entry">${entryHtml(e)}</div>`,
+    footer: `<button class="btn primary full big" data-act="share">Compartir entrenamiento</button>`,
+    onMount: (el, close) =>
+      el.querySelector('[data-act="share"]').addEventListener("click", () => {
+        close(true);
+        go("share", { entry: idx });
+      }),
   });
 }
 
@@ -289,18 +420,26 @@ function videoHtml(ex) {
 // ---------- diálogos propios (confirm/alert no funcionan en todas partes) ----------
 function ask(msg, okText = "Sí") {
   return new Promise((resolve) => {
-    const d = document.createElement("div");
-    d.className = "modal";
-    d.innerHTML = `<div class="modal-box"><p>${esc(msg)}</p>
-      <div class="row gap"><button class="btn ghost grow" data-r="0">Cancelar</button>
-      <button class="btn primary grow" data-r="1">${esc(okText)}</button></div></div>`;
-    d.addEventListener("click", (e) => {
-      const r = e.target.closest("[data-r]");
-      if (!r && e.target !== d) return;
-      d.remove();
-      resolve(r ? r.dataset.r === "1" : false);
+    let done = false;
+    const finish = (v) => {
+      if (done) return;
+      done = true;
+      resolve(v);
+    };
+    openSheet({
+      title: msg,
+      footer: `<div class="sheet-actions">
+        <button class="btn primary full big" data-r="1">${esc(okText)}</button>
+        <button class="btn ghost full big" data-r="0">Cancelar</button></div>`,
+      onClose: () => finish(false),
+      onMount: (el, close) =>
+        el.querySelectorAll("[data-r]").forEach((b) =>
+          b.addEventListener("click", () => {
+            finish(b.dataset.r === "1");
+            close();
+          })
+        ),
     });
-    $shell.appendChild(d);
   });
 }
 function toast(msg) {
@@ -514,7 +653,7 @@ function go(view, params = {}) {
 }
 
 $back.addEventListener("click", () => {
-  if (route.view === "workout") return go("day", { dayIndex: session ? session.dayIndex : 0 });
+  if (route.view === "workout") return go("home");
   if (route.view === "rpe" && route.from === "workout") return go("workout");
   if (route.view === "edit") return go("settings");
   if (route.view === "share") return go("history");
@@ -633,6 +772,7 @@ const ICON = {
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   chevron: '<path d="m9 6 6 6-6 6"/>',
   close: '<path d="M6 6l12 12M18 6 6 18"/>',
+  back: '<path d="m15 6-6 6 6 6"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/>',
   refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>',
   pause: '<path d="M8 5v14M16 5v14"/>',
@@ -751,7 +891,7 @@ function renderHome() {
   const lastEntry = history[history.length - 1];
   const last = lastEntry
     ? `<section class="section"><div class="section-head"><h2>Último entrenamiento</h2><button class="text-btn" data-act="history">Ver historial</button></div>
-        <div class="last"><span><b>${esc(lastEntry.dayName)}</b><small>${fmtDate(lastEntry.date)}</small></span><span class="last-dur">${fmt(lastEntry.duration)}</span></div></section>`
+        <button class="last" data-last aria-label="Ver detalle del último entrenamiento"><span><b>${esc(lastEntry.dayName)}</b><small>${fmtDate(lastEntry.date)}</small></span><span class="last-dur">${fmt(lastEntry.duration)}</span>${icon("chevron")}</button></section>`
     : "";
 
   $app.innerHTML = `
@@ -780,12 +920,11 @@ function renderHome() {
       render();
     })
   );
-  $app.querySelectorAll("[data-day]").forEach((b) =>
-    b.addEventListener("click", () => go("day", { dayIndex: +b.dataset.day }))
-  );
+  $app.querySelectorAll("[data-day]").forEach((b) => b.addEventListener("click", () => daySheet(+b.dataset.day)));
+  $app.querySelector("[data-last]")?.addEventListener("click", () => entrySheet(history.length - 1));
   bindActs({
     start: () => startSession(di),
-    preview: () => go("day", { dayIndex: di }),
+    preview: () => daySheet(di),
     resume: () => {
       ensurePlayback();
       go("workout");
@@ -848,47 +987,11 @@ function renderDay() {
   if (!day) return go("home");
   setHeader(day.name, true);
   const wk = weekSets();
-
-  let html = "";
-  let lastBlock = null;
-  for (const g of groupsOf(day)) {
-    const first = day.exercises[g.start];
-    if (first.block && first.block !== lastBlock) {
-      html += `<h3 class="block-title">${esc(first.block)}</h3>`;
-      lastBlock = first.block;
-    }
-    const label = groupLabel(g);
-    const members = day.exercises.slice(g.start, g.end);
-    const rounds = Math.max(...members.map((e) => setsOf(e, wk)));
-    const items = members
-      .map((ex, k) => {
-        const i = g.start + k;
-        const tag = g.name ? (g.name.length === 1 ? `${g.name}${k + 1}` : k + 1) : i + 1;
-        return `
-        <button class="ex-row ${g.name ? "in-group" : "card"}" data-ex="${i}" aria-label="${esc(ex.name)}: ver técnica">
-          <span class="num">${esc(tag)}</span>
-          <span class="grow">
-            <span class="card-title">${esc(ex.name)}</span>
-            <span class="muted block small">${esc(exTarget(ex, wk))}</span>
-          </span>
-          ${icon("chevron")}
-        </button>`;
-      })
-      .join("");
-    if (label) {
-      const restR = +members[members.length - 1].rest || 0;
-      html += `<div class="card group-card">
-        <div class="group-head row between"><b>${esc(label)}</b><span class="muted small">${rounds} ${rounds === 1 ? "ronda" : "rondas"}${restR ? ` · descanso ${restR} s` : ""}</span></div>
-        ${items}
-      </div>`;
-    } else {
-      html += items;
-    }
-  }
+  const html = dayListHtml(day, wk);
 
   const otherSession = session && session.dayIndex !== route.dayIndex;
   $app.innerHTML = `
-    <div class="list">${html}</div>
+    ${html}
     <div class="sticky-bottom">
       ${
         session && !otherSession
@@ -1497,7 +1600,7 @@ function renderWorkout() {
     skipRest: () => beginWork(true),
     prevEx: () => jumpStep(-1),
     nextEx: () => jumpStep(1),
-    rpe: () => go("rpe", { from: "workout" }),
+    rpe: () => rpeSheet(),
     tech: () => techSheet(ex, weekSets()),
     finish: async () => {
       if (await ask("¿Terminar y guardar el entrenamiento?")) finishSession();
@@ -2057,9 +2160,19 @@ function renderHistory() {
       <div class="card stat"><b>${total}</b><span class="muted">entrenamientos</span></div>
       <div class="card stat"><b>${week}</b><span class="muted">últimos 7 días</span></div>
     </div>
-    <div class="list mt">${history.map((h, i) => entryHtml(h, i)).reverse().join("") || `<p class="muted center">Aún no hay entrenamientos guardados.</p>`}</div>
+    <div class="list mt">${
+      history
+        .map((h, i) => {
+          const st = entryStats(h);
+          return `<button class="row-link hist-item" data-entry="${i}">
+            <span><b>${esc(h.dayName)} · ${fmtDate(h.date)}</b><small>${fmt(h.duration)} · ${st.ex} ejercicios · ${st.sets} series${st.vol ? ` · ${st.vol} kg` : ""}</small></span>${icon("chevron")}
+          </button>`;
+        })
+        .reverse()
+        .join("") || `<p class="muted center">Aún no hay entrenamientos guardados.</p>`
+    }</div>
     ${total ? `<button class="btn danger-ghost full mt" data-act="clear">Borrar historial</button>` : ""}`;
-  $app.querySelectorAll("[data-share]").forEach((b) => b.addEventListener("click", () => go("share", { entry: +b.dataset.share })));
+  $app.querySelectorAll("[data-entry]").forEach((b) => b.addEventListener("click", () => entrySheet(+b.dataset.entry)));
   bindActs({
     clear: async () => {
       if (await ask("¿Borrar todo el historial?")) {

@@ -827,3 +827,42 @@ html.standalone, html.standalone body { background: var(--bg); }
   .ring.anim { animation: none; }
   #app.view-enter > *, .phase.morph > * { animation: none !important; }
 }
+
+/* ---------- espacio inferior según la vista ---------- */
+#app { padding-bottom: calc(var(--safe-bottom) + 12px); }
+body.has-tabbar #app { padding-bottom: calc(var(--tabbar-h) + 28px + var(--safe-bottom)); }
+.sticky-bottom { padding: 12px 0 0; margin-bottom: calc(-1 * (var(--safe-bottom) + 12px)); padding-bottom: calc(var(--safe-bottom) + 12px); }
+body.is-workout .workout-foot { padding-bottom: 0; }
+
+/* ---------- panel inferior: cabecera con volver, pie fijo, cambio de contenido ---------- */
+.sheet-head { align-items: center; }
+.sheet-title { flex: 1; min-width: 0; }
+.sheet-back {
+  flex: none; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
+  background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.1); color: var(--text);
+}
+.sheet-back .ico { width: 18px; height: 18px; }
+.sheet-foot { flex: none; padding-top: 14px; }
+.sheet-foot[hidden], .sheet-body[hidden] { display: none; }
+.sheet-actions { display: grid; gap: 10px; }
+.sheet .list { gap: 8px; }
+.sheet .block-title { margin-top: 12px; }
+.sheet .block-title:first-child { margin-top: 0; }
+.sheet-chip.rpe { color: var(--rpe); border-color: color-mix(in srgb, var(--rpe) 45%, transparent); }
+.sheet-entry .card { background: transparent; border: 0; padding: 0; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.sheet-entry .card > .row:first-child, .sheet-entry .card > .muted.small:nth-child(2) { display: none; }
+.sheet-entry { margin-top: 4px; }
+.sheet-head.swap, .sheet-body.swap, .sheet-foot.swap { animation: view-in .28s var(--ease-out) both; }
+.sheet-body.swap { animation-delay: .03s; }
+.sheet-foot.swap { animation-delay: .06s; }
+/* confirmaciones: título más sobrio */
+.sheet-head h3 { text-wrap: balance; }
+
+/* filas tocables de historial / último entrenamiento */
+.hist-item b { font-weight: 700; }
+.last { width: 100%; cursor: pointer; text-align: left; gap: 12px; }
+.last .ico { color: var(--muted); width: 18px; height: 18px; flex: none; }
+.last-dur { margin-left: auto; }
+
+/* tabla RPE: descripción en texto normal, alineada a la izquierda */
+.hist-row .rpe-n + span { color: var(--text); text-align: left; font-variant-numeric: normal; }

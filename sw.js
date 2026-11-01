@@ -1,5 +1,5 @@
 // Service worker: permite abrir la app sin conexión.
-const CACHE = "entreno-v18";
+const CACHE = "entreno-v19";
 const ASSETS = [
   "./",
   "index.html",
