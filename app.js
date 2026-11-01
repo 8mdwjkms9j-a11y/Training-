@@ -718,6 +718,7 @@ function stopPlayback() {
 }
 
 function unlockAudio() {
+  unlockSfx();
   try {
     if (session) ensurePlayback();
     else if (navigator.audioSession) navigator.audioSession.type = "playback";
@@ -762,9 +763,73 @@ function beep(freq = 880, dur = 0.15, times = 1, vol = 0.5) {
 //  end    = termina el ejercicio (o un lado)
 //  finish = termina el entrenamiento
 const SFX = { count: [660, 0.1, 1, 0.45], start: [990, 0.2, 1, 0.5], end: [1175, 0.2, 2, 0.5], finish: [1320, 0.18, 3, 0.45] };
+// Cada pitido se genera una vez como un WAV corto y se reproduce con <audio>:
+// en iOS sigue sonando aunque la voz o el sistema interrumpan el motor Web Audio.
+function toneWavUrl(kind) {
+  const [f, d, n] = SFX[kind];
+  const rate = 22050, gap = 0.08;
+  const total = Math.ceil(rate * (n * d + (n - 1) * gap + 0.05));
+  const buf = new ArrayBuffer(44 + total * 2), v = new DataView(buf);
+  const w = (o, str) => [...str].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  w(0, "RIFF"); v.setUint32(4, 36 + total * 2, true); w(8, "WAVEfmt ");
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  w(36, "data"); v.setUint32(40, total * 2, true);
+  for (let i = 0; i < total; i++) {
+    const t = i / rate;
+    const k = Math.floor(t / (d + gap));
+    const local = t - k * (d + gap);
+    let x = 0;
+    if (k < n && local < d) {
+      const env = Math.min(1, local / 0.006) * Math.exp((-5 * local) / d); // ataque corto, caída suave
+      x = 0.62 * env * (Math.sin(2 * Math.PI * f * local) + 0.18 * Math.sin(4 * Math.PI * f * local));
+    }
+    v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, x)) * 32767, true);
+  }
+  return URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+}
+const sfxEls = {};
+function sfxEl(kind) {
+  if (!sfxEls[kind]) {
+    const a = new Audio(toneWavUrl(kind));
+    a.preload = "auto";
+    a.setAttribute("playsinline", "");
+    sfxEls[kind] = a;
+  }
+  return sfxEls[kind];
+}
+// iOS exige un toque para habilitar cada sonido: se "desbloquean" en silencio al empezar
+let sfxUnlocked = false;
+function unlockSfx() {
+  if (sfxUnlocked) return;
+  sfxUnlocked = true;
+  Object.keys(SFX).forEach((k) => {
+    const a = sfxEl(k);
+    a.muted = true;
+    const p = a.play();
+    const done = () => {
+      a.pause();
+      a.currentTime = 0;
+      a.muted = false;
+    };
+    p && p.then ? p.then(done, () => ((a.muted = false), (sfxUnlocked = false))) : done();
+  });
+}
 function sfx(kind) {
-  const [f, d, n, v] = SFX[kind];
-  beep(f, d, n, v);
+  if (!prefs.sound) return;
+  try {
+    const a = sfxEl(kind);
+    a.muted = false;
+    a.currentTime = 0;
+    const p = a.play();
+    if (p && p.catch) p.catch(() => {
+      const [f, d, n, v] = SFX[kind];
+      beep(f, d, n, v); // respaldo
+    });
+  } catch {
+    const [f, d, n, v] = SFX[kind];
+    beep(f, d, n, v);
+  }
 }
 
 
@@ -1193,6 +1258,7 @@ function renderDay() {
 */
 function startSession(dayIndex) {
   unlockAudio();
+  unlockSfx();
   ensurePlayback();
   const day = plan.days[dayIndex];
   const steps = buildSteps(day, weekSets());
@@ -1232,46 +1298,22 @@ const curStep = () => session.steps[session.i];
 const curEx = () => curDay().exercises[curStep().ex];
 
 // --- temporizador basado en hora real (sigue funcionando si se bloquea la pantalla)
-let scheduledNodes = [];
+let scheduledTimeouts = [];
 function cancelScheduled() {
-  scheduledNodes.forEach((o) => {
-    try {
-      o.stop();
-    } catch {}
-  });
-  scheduledNodes = [];
+  scheduledTimeouts.forEach(clearTimeout);
+  scheduledTimeouts = [];
 }
-function scheduleTone(at, freq, dur, vol) {
-  const o = audioCtx.createOscillator();
-  const g = audioCtx.createGain();
-  o.frequency.value = freq;
-  g.gain.setValueAtTime(0.0001, at);
-  g.gain.exponentialRampToValueAtTime(vol, at + 0.01);
-  g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
-  o.connect(g).connect(audioCtx.destination);
-  o.start(at);
-  o.stop(at + dur + 0.03);
-  scheduledNodes.push(o);
-}
-// Agenda la cuenta 3-2-1 y el aviso final con el reloj del audio: suenan a tiempo
-// aunque la pantalla se trabe un instante.
+// Agenda la cuenta 3-2-1 (solo en "Prepárate") y el aviso del final del temporizador.
 function scheduleTimerSounds() {
   cancelScheduled();
   const t = session?.timer;
   if (!t || !t.running) return;
-  t.sched = false;
-  if (!prefs.sound || !audioCtx || audioCtx.state !== "running") return;
-  const left = (t.endsAt - Date.now()) / 1000;
-  const now = audioCtx.currentTime + 0.02;
-  const end = now + Math.max(0, left);
-  const play = (at, kind) => {
-    const [f, d, n, v] = SFX[kind];
-    for (let i = 0; i < n; i++) scheduleTone(at + i * (d + 0.08), f, d, v);
-  };
-  if (session.phase === "work") play(end, "end");
+  const leftMs = t.endsAt - Date.now();
+  const at = (ms, kind) => ms >= -50 && scheduledTimeouts.push(setTimeout(() => sfx(kind), Math.max(0, ms)));
+  if (session.phase === "work") at(leftMs, "end");
   else {
-    if (session.restKind === "prep") [3, 2, 1].forEach((k) => left - k > 0.05 && play(now + left - k, "count"));
-    play(end, "start");
+    if (session.restKind === "prep") [3, 2, 1].forEach((k) => leftMs - k * 1000 > 50 && at(leftMs - k * 1000, "count"));
+    at(leftMs, "start");
   }
   t.sched = true;
 }
@@ -1699,6 +1741,7 @@ function renderWorkout() {
     </nav>
   `;
 
+  placePulse();
   // solo vuelve arriba al cambiar de ejercicio (evita saltos en cada redibujo)
   if (renderWorkout.lastEx !== `${session.dayIndex}:${st.ex}`) {
     renderWorkout.lastEx = `${session.dayIndex}:${st.ex}`;
@@ -1837,6 +1880,18 @@ function pulseFor(ex) {
   return { cls: `live ${mode}`, style: `--beat:${beat}s;--beat-off:-${offset.toFixed(3)}s;--beat-half:-${(offset + beat / 2).toFixed(3)}s` };
 }
 
+
+// La onda nace exactamente del centro del anillo/contador (no del centro de la tarjeta)
+function placePulse() {
+  const ph = $app.querySelector(".phase");
+  const c = ph?.querySelector(".phase-center > *");
+  if (!ph || !c) return;
+  const a = ph.getBoundingClientRect();
+  const b = c.getBoundingClientRect();
+  ph.style.setProperty("--py", `${Math.round(b.top - a.top + b.height / 2)}px`);
+  ph.style.setProperty("--px", `${Math.round(b.left - a.left + b.width / 2)}px`);
+}
+window.addEventListener("resize", () => route.view === "workout" && placePulse());
 
 function metroStatusText(ex) {
   const m = session.metro;

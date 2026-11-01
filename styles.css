@@ -936,7 +936,7 @@ input, select, textarea { font-size: max(16px, 1em); }
 .phase > *:not(.pulse-field) { position: relative; z-index: 1; }
 .pulse-field { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; border-radius: inherit; }
 .pulse-field i {
-  position: absolute; left: 50%; top: 40%; width: 190%; aspect-ratio: 1; margin-left: -95%; margin-top: -95%;
+  position: absolute; left: var(--px, 50%); top: var(--py, 40%); width: 190%; aspect-ratio: 1; margin-left: -95%; margin-top: -95%;
   border-radius: 50%; opacity: 0; transform: scale(.18);
   background: radial-gradient(circle,
     transparent 30%,
