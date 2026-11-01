@@ -16,7 +16,21 @@ const LS = {
   kg: "entreno.kg",
 };
 
-const STANDALONE = window.navigator.standalone === true || window.matchMedia("(display-mode: standalone)").matches;
+// ¿Se abrió desde el ícono de inicio? Varias señales, porque iOS no siempre las informa todas.
+// El acceso directo abre "?app=1" (start_url del manifest) y lo recordamos: en iOS la app de
+// inicio tiene su propio almacenamiento, separado de Safari.
+const STANDALONE = (() => {
+  let flag = false;
+  try {
+    if (new URLSearchParams(location.search).get("app") === "1") localStorage.setItem("entreno.homeapp", "1");
+    flag = localStorage.getItem("entreno.homeapp") === "1";
+  } catch {}
+  return (
+    flag ||
+    window.navigator.standalone === true ||
+    ["standalone", "fullscreen", "minimal-ui"].some((m) => window.matchMedia(`(display-mode: ${m})`).matches)
+  );
+})();
 document.documentElement.classList.toggle("standalone", STANDALONE);
 
 // ---------- marco de la app ----------
@@ -27,6 +41,10 @@ const $shell = document.getElementById("shell");
 const safeTopProbe = document.createElement("div");
 safeTopProbe.style.cssText = "position:absolute;visibility:hidden;pointer-events:none;height:env(safe-area-inset-top)";
 document.documentElement.appendChild(safeTopProbe);
+// 100lvh = alto de la pantalla sin barras del navegador (lo que corresponde en la app de inicio)
+const lvhProbe = document.createElement("div");
+lvhProbe.style.cssText = "position:absolute;visibility:hidden;pointer-events:none;height:100lvh;width:1px;top:0";
+document.documentElement.appendChild(lvhProbe);
 let viewportInfo = "";
 function setAppHeight() {
   const portrait = window.matchMedia("(orientation: portrait)").matches;
@@ -36,10 +54,14 @@ function setAppHeight() {
   // iOS (app abierta desde el ícono, barra de estado translúcida) a veces informa un alto
   // más corto que la pantalla: justo le falta la barra de estado. Si eso es lo que falta
   // (o sabemos que es la app de inicio), usamos el alto real de la pantalla.
+  const lvh = lvhProbe.offsetHeight || 0;
   const missingStatusBar = portrait && ih < sh && ih + safeTop >= sh - 16;
-  const h = portrait && (STANDALONE || missingStatusBar) ? Math.max(sh, ih) : ih;
+  // En la app de inicio no hay barra de Safari: usamos la medida más grande que no supere la pantalla.
+  const appMode = STANDALONE || missingStatusBar;
+  const full = portrait ? Math.max(ih, Math.min(sh, Math.max(lvh, sh))) : Math.max(ih, lvh);
+  const h = appMode ? full : ih;
   document.documentElement.style.setProperty("--app-h", h + "px");
-  viewportInfo = `${sh}/${ih}+${safeTop}→${h}${STANDALONE ? " app" : ""}`;
+  viewportInfo = `${sh}/${ih}/${lvh}+${safeTop}→${h}${STANDALONE ? " app" : ""}`;
 }
 setAppHeight();
 window.addEventListener("pageshow", setAppHeight);

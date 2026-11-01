@@ -2,7 +2,7 @@
   "name": "Entreno",
   "short_name": "Entreno",
   "id": "./?app=entreno",
-  "start_url": "./",
+  "start_url": "./?app=1",
   "scope": "./",
   "display": "standalone",
   "background_color": "#101114",

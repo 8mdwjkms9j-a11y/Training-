@@ -775,6 +775,7 @@ body.is-workout #app > * { flex: none; }
 body.is-workout .workout-foot { margin-top: auto; padding-top: 12px; }
 
 html.standalone .shell { min-height: 100lvh; }
+html.standalone, html.standalone body { background: var(--bg); }
 
 /* =========================================================
    MOVIMIENTO
