@@ -463,7 +463,7 @@ let history = load(LS.history, []);
 let session = load(LS.session, null);
 let lastKg = load(LS.kg, {});
 let prefs = Object.assign(
-  { sound: true, voice: true, autoRest: true, week: "auto", prep: 10, autoStart: true, metroEvery: false },
+  { sound: true, voice: true, autoRest: true, week: "auto", prep: 10, autoStart: true, metroEvery: false, ambient: true },
   load(LS.prefs, {})
 );
 let lastTempo = load("entreno.tempo", {});
@@ -900,6 +900,7 @@ function renderNow(state, changed) {
   }
   if (changed) $app.querySelector(".phase")?.classList.add("morph");
   updateNowPlaying(true);
+  updateAmbient();
 }
 
 function bindActs(map) {
@@ -1326,6 +1327,7 @@ function tick() {
   }
   if (route.view === "workout") paintLive();
   if (Date.now() - npAt > 1500) {
+    updateAmbient();
     npAt = Date.now();
     updateNowPlaying();
   }
@@ -1408,6 +1410,7 @@ function metroTick() {
       beep(660, 0.08, 1, 0.3);
     }
     if (now >= m.switchUntil) {
+      setTimeout(() => route.view === "workout" && render(), 0);
       m.switchUntil = null;
       m.side++;
       m.t0 = now;
@@ -1427,6 +1430,7 @@ function metroTick() {
   if (beat >= total) {
     if (m.side < metroSides(ex)) {
       m.switchUntil = now + 5000;
+      setTimeout(() => route.view === "workout" && render(), 0);
       m.lastCount = null;
       session.reps = +ex.reps;
       beep(990, 0.15, 2, 0.4);
@@ -1546,6 +1550,7 @@ function jumpStep(delta) {
 
 function finishSession() {
   cancelScheduled();
+  setTimeout(updateAmbient, 0);
   const day = curDay();
   const entry = {
     date: Date.now(),
@@ -1589,6 +1594,9 @@ function renderWorkout() {
     return `<span class="dot ${doneSets.has(i) ? "done" : ""} ${cur ? "cur" : ""}"></span>`;
   }).join("");
 
+  // ---- ritmo visual (onda de pulso en la tarjeta + anillo dentro de cada repetición) ----
+  const pulse = pulseFor(ex);
+
   // ---- contexto: dónde estoy y qué viene ----
   const state = currentState();
   const nEx = day.exercises.length;
@@ -1629,6 +1637,7 @@ function renderWorkout() {
   } else if (hasMetro(ex)) {
     const m = session.metro;
     center = `<button class="rep-counter ${m && m.running ? "metro-on" : ""}" id="repBtn" data-act="${m ? (m.running ? "" : "metroToggle") : "repPlus"}" aria-label="${m ? (m.running ? "Conteo en curso" : "Seguir conteo") : "Sumar repetición"}">
+        ${m ? `<svg class="rep-arc" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="47" pathLength="100"/></svg>` : ""}
         <span id="repNum">${session.reps}</span><small>/ ${ex.reps}</small></button>`;
     caption = `<span id="metroStatus">${m ? metroStatusText(ex) : "Toca el círculo para contar a mano"}</span>`;
     tools = m
@@ -1662,7 +1671,8 @@ function renderWorkout() {
       <button class="tech-chip ${state === "prep" ? "hint" : ""}" data-act="tech" aria-label="Ver técnica: notas y video">${icon("play")} Técnica</button>
     </div>
 
-    <section class="phase">
+    <section class="phase ${pulse.cls}" style="${pulse.style}">
+      <div class="pulse-field" aria-hidden="true"><i></i><i></i></div>
       <header class="phase-head">
         <div class="state-pill" role="status"><i></i><span id="stateTxt">${STATE_LABEL[state] || ""}</span></div>
         <div class="set-info">${setTxt}${setDotsHtml}</div>
@@ -1785,6 +1795,106 @@ function renderWorkout() {
       if (await ask("¿Terminar y guardar el entrenamiento?")) finishSession();
     },
   });
+}
+
+
+// Ritmo de la onda: repetición (conteo), segundo (tiempo), respiración (descanso / reps a mano).
+// Se alinea con el reloj real para que la onda coincida con el conteo.
+function pulseFor(ex) {
+  const state = currentState();
+  const now = Date.now();
+  let beat = 0, offset = 0, mode = "";
+  if (session.phase === "rest") {
+    const t = session.timer;
+    if (t && t.running) {
+      beat = state === "rest" ? 4 : 1;
+      offset = ((t.total - timerLeft()) % beat) || 0;
+      mode = state === "rest" ? "breathe" : "tick";
+    }
+  } else if (session.metro) {
+    const m = session.metro;
+    if (m.running && !m.switchUntil) {
+      beat = tempoOf(ex);
+      offset = Math.max(0, (now - m.t0) / 1000) % beat;
+      mode = "beat";
+    } else if (m.running && m.switchUntil) {
+      beat = 1;
+      mode = "tick";
+    }
+  } else if (ex.time) {
+    const t = session.timer;
+    if (t && t.running) {
+      beat = 1;
+      offset = (t.total - timerLeft()) % 1;
+      mode = "tick";
+    }
+  } else {
+    beat = 3;
+    offset = ((now - session.setStartedAt) / 1000) % 3;
+    mode = "breathe";
+  }
+  if (!beat) return { cls: "still", style: "" };
+  return { cls: `live ${mode}`, style: `--beat:${beat}s;--beat-off:-${offset.toFixed(3)}s;--beat-half:-${(offset + beat / 2).toFixed(3)}s` };
+}
+
+// ---------- ambiente sonoro: acorde suave que respira al ritmo ----------
+let amb = null;
+function ambientEnsure() {
+  if (amb || !audioCtx) return amb;
+  const master = audioCtx.createGain();
+  master.gain.value = 0;
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = "lowpass";
+  filter.frequency.value = 900;
+  filter.Q.value = 0.4;
+  filter.connect(master).connect(audioCtx.destination);
+  // respiración: LFO que mueve el volumen al ritmo
+  const lfo = audioCtx.createOscillator();
+  const lfoGain = audioCtx.createGain();
+  lfo.frequency.value = 0.4;
+  lfoGain.gain.value = 0;
+  lfo.connect(lfoGain).connect(master.gain);
+  lfo.start();
+  const voices = [0, 1, 2, 3].map((k) => {
+    const o = audioCtx.createOscillator();
+    o.type = k % 2 ? "sine" : "triangle";
+    o.detune.value = (k - 1.5) * 4;
+    const g = audioCtx.createGain();
+    g.gain.value = k === 0 ? 0.9 : 0.55;
+    o.connect(g).connect(filter);
+    o.start();
+    return o;
+  });
+  amb = { master, filter, lfo, lfoGain, voices, mode: "off" };
+  return amb;
+}
+const AMB_CHORDS = {
+  work: [110, 164.81, 220, 277.18], // La mayor: cálido, activo
+  rest: [87.31, 130.81, 174.61, 220], // Fa: más grave y tranquilo
+};
+function updateAmbient() {
+  const want = !prefs.ambient || !prefs.sound || !session || isWorkoutPaused()
+    ? "off"
+    : session.phase === "rest" ? "rest" : "work";
+  if (want === "off" && !amb) return;
+  if (!ctxReady() || !ambientEnsure()) return;
+  const t = audioCtx.currentTime;
+  const ex = session ? curEx() : null;
+  const beat = want === "work" && ex && hasMetro(ex) ? tempoOf(ex) : want === "work" ? 2 : 4;
+  amb.lfo.frequency.setTargetAtTime(1 / beat, t, 0.3);
+  if (want !== amb.mode) {
+    amb.mode = want;
+    if (want === "off") {
+      amb.master.gain.setTargetAtTime(0, t, 0.25);
+      amb.lfoGain.gain.setTargetAtTime(0, t, 0.25);
+      return;
+    }
+    const chord = AMB_CHORDS[want];
+    amb.voices.forEach((o, i) => o.frequency.setTargetAtTime(chord[i], t, 0.6));
+    amb.filter.frequency.setTargetAtTime(want === "work" ? 1100 : 650, t, 0.8);
+    amb.master.gain.setTargetAtTime(want === "work" ? 0.03 : 0.022, t, 0.8);
+    amb.lfoGain.gain.setTargetAtTime(want === "work" ? 0.012 : 0.009, t, 0.8);
+  }
 }
 
 function metroStatusText(ex) {
@@ -2441,6 +2551,7 @@ function renderSettings() {
         ${opt("autoRest", "Iniciar descanso automáticamente")}
         ${opt("autoStart", "Arrancar solo el ejercicio tras prepararse")}
         ${opt("metroEvery", "Metrónomo: sonar en cada repetición (si no, solo al inicio y al final)")}
+        ${opt("ambient", "Ambiente sonoro suave mientras entrenas (respira al ritmo)")}
       </div>
     </section>
     <section class="section">
@@ -2475,6 +2586,7 @@ function renderSettings() {
     c.addEventListener("change", () => {
       prefs[c.dataset.pref] = c.checked;
       save(LS.prefs, prefs);
+      updateAmbient();
     })
   );
   bindActs({

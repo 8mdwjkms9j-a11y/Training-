@@ -925,3 +925,60 @@ body.is-workout .workout-foot { padding-bottom: 0; }
 html, body, button, a, input, label, .sheet, .tabbar { touch-action: manipulation; }
 input, select, textarea { font-size: max(16px, 1em); }
 .kg-btn, .ibtn, .btn, .rep-counter, .tempo-ctl button { -webkit-user-select: none; user-select: none; }
+
+/* =========================================================
+   RITMO VISUAL
+   Onda que nace del contador y cubre la tarjeta, al ritmo real:
+   repetición (conteo), segundo (tiempo) o respiración (descanso).
+   Dos ondas desfasadas medio ciclo para un flujo continuo.
+   Solo transform/opacity: no repinta la tarjeta.
+   ========================================================= */
+.phase > *:not(.pulse-field) { position: relative; z-index: 1; }
+.pulse-field { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; border-radius: inherit; }
+.pulse-field i {
+  position: absolute; left: 50%; top: 40%; width: 190%; aspect-ratio: 1; margin-left: -95%; margin-top: -95%;
+  border-radius: 50%; opacity: 0; transform: scale(.18);
+  background: radial-gradient(circle,
+    transparent 26%,
+    color-mix(in srgb, var(--sa) 42%, transparent) 42%,
+    color-mix(in srgb, var(--sb) 24%, transparent) 52%,
+    color-mix(in srgb, var(--sb) 8%, transparent) 62%,
+    transparent 70%);
+  will-change: transform, opacity;
+}
+.phase.live .pulse-field i:first-child { animation: wave var(--beat) cubic-bezier(.2, .6, .35, 1) infinite var(--beat-off); }
+.phase.live .pulse-field i:last-child { animation: wave var(--beat) cubic-bezier(.2, .6, .35, 1) infinite var(--beat-half); }
+.phase.live.tick .pulse-field i:last-child { display: none; }
+.phase.live.breathe .pulse-field i { animation-name: breathe-wave; }
+@keyframes wave {
+  0% { transform: scale(.14); opacity: 0; }
+  10% { opacity: 1; }
+  70% { opacity: .35; }
+  100% { transform: scale(1.1); opacity: 0; }
+}
+@keyframes breathe-wave {
+  0% { transform: scale(.35); opacity: 0; }
+  45% { opacity: .7; }
+  100% { transform: scale(1.05); opacity: 0; }
+}
+/* en pausa todo queda quieto y apagado: la diferencia es la señal */
+.phase.still .pulse-field { opacity: 0; }
+.phase.still .rep-counter, .phase.still .ring { filter: saturate(.55); opacity: .85; transition: opacity .3s, filter .3s; }
+
+/* anillo fino que se llena en cada repetición */
+.rep-arc { position: absolute; inset: -9px; width: calc(100% + 18px); height: calc(100% + 18px); transform: rotate(-90deg); pointer-events: none; }
+.rep-arc circle {
+  fill: none; stroke: color-mix(in srgb, var(--sb) 80%, white); stroke-width: 2.6; stroke-linecap: round;
+  filter: drop-shadow(0 0 3px var(--sb));
+  stroke-dasharray: 100; stroke-dashoffset: 100; opacity: .9;
+}
+.phase.live.beat .rep-arc circle { animation: rep-fill var(--beat) linear infinite var(--beat-off); }
+@keyframes rep-fill { from { stroke-dashoffset: 100; } to { stroke-dashoffset: 0; } }
+/* el antiguo anillo que latía queda reemplazado por la onda */
+.rep-counter.metro-on::after { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .phase.live .pulse-field i { animation: none !important; }
+  .phase.live .pulse-field i:first-child { opacity: .35; transform: scale(.8); }
+  .phase.live.beat .rep-arc circle { animation: none; stroke-dashoffset: 0; opacity: .4; }
+}
