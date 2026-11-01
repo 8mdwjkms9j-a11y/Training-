@@ -1425,6 +1425,12 @@ const tempoOf = (ex) => +(lastTempo[ex.name] ?? ex.tempo) || 1.5;
 const metroBeats = (ex) => +ex.reps * (ex.alternate ? 2 : 1);
 const metroSides = (ex) => (ex.perSide && !ex.alternate ? 2 : 1);
 
+function updateTempoUi(ex) {
+  const b = $app.querySelector(".tempo-ctl b");
+  if (b) b.textContent = `${tempoOf(ex).toFixed(1).replace(".0", "")}s`;
+  syncPulse();
+}
+
 function bumpRep() {
   const el = document.getElementById("repNum");
   if (!el) return;
@@ -1521,6 +1527,7 @@ function metroTick() {
     // solo suena al empezar (si no sonó ya al terminar la cuenta); el conteo se ve en pantalla
     if (beat === 0 && m.side === 1 && !m.quiet) sfx("start"); // el 2º lado ya sonó al terminar el cambio
     bumpRep();
+    syncPulse();
     persist();
   }
 }
@@ -1739,7 +1746,6 @@ function renderWorkout() {
   const setDotsHtml = st.nSets > 1 ? `<span class="dots">${setDots}</span>` : "";
 
   $app.innerHTML = `
-    <div class="progress" aria-hidden="true"><div style="width:${(session.i / total) * 100}%"></div></div>
     <div class="context">${context}</div>
     <h2 class="ex-name">${esc(ex.name)}</h2>
     <div class="ex-meta">
@@ -1808,11 +1814,11 @@ function renderWorkout() {
     },
     tempoMinus: () => {
       metroSetTempo(ex, -0.5);
-      render();
+      updateTempoUi(ex);
     },
     tempoPlus: () => {
       metroSetTempo(ex, 0.5);
-      render();
+      updateTempoUi(ex);
     },
     repMinus: () => {
       session.reps = Math.max(0, session.reps - 1);
@@ -1933,6 +1939,25 @@ function liquidBlobs() {
   });
 }
 
+// Reinicia la onda y el anillo de la repetición en el instante exacto del pulso del reloj:
+// así siguen el ritmo actual (p. ej. 1,5 s) aunque cambie, sin acumular desfase.
+function syncPulse() {
+  if (route.view !== "workout" || !session) return;
+  const ph = $app.querySelector(".phase.live");
+  if (!ph || ph.classList.contains("liquid")) return;
+  const pl = pulseFor(curEx());
+  if (!pl.style) return;
+  pl.style.split(";").forEach((kv) => {
+    const [k, v] = kv.split(":");
+    if (k) ph.style.setProperty(k, v);
+  });
+  ph.querySelectorAll(".pulse-field i, .rep-arc circle").forEach((el) => {
+    el.style.animation = "none";
+    void el.offsetWidth;
+    el.style.animation = "";
+  });
+}
+
 // La onda nace exactamente del centro del anillo/contador (no del centro de la tarjeta)
 function placePulse() {
   const ph = $app.querySelector(".phase");
@@ -1985,6 +2010,15 @@ function adjustTimer(delta) {
 function paintLive() {
   if (route.view === "workout" && session) {
     syncState();
+    // ejercicios de tiempo: la onda se re-sincroniza en cada segundo del reloj
+    const t = session.timer;
+    if (t && t.running && session.phase === "work") {
+      const sec = Math.ceil(timerLeft());
+      if (sec !== paintLive.sec) {
+        paintLive.sec = sec;
+        syncPulse();
+      }
+    }
     const tag = document.getElementById("sideTag");
     if (tag) {
       const sd = currentSide(curEx(), curStep());

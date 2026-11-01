@@ -1045,3 +1045,18 @@ input, select, textarea { font-size: max(16px, 1em); }
 
 /* rendimiento: la capa de efectos se compone aparte de la tarjeta de vidrio */
 .pulse-field { contain: strict; transform: translateZ(0); }
+
+/* ---------- entrenamiento: sin barra superior ni línea; solo volver y reloj total flotando ---------- */
+body.is-workout .topbar {
+  background: transparent; border-bottom: 0; box-shadow: none;
+  backdrop-filter: none; -webkit-backdrop-filter: none; pointer-events: none;
+}
+body.is-workout .topbar h1 { visibility: hidden; }
+body.is-workout .topbar .icon-btn, body.is-workout .topbar .session-clock { pointer-events: auto; }
+body.is-workout .topbar .icon-btn {
+  width: 40px; height: 40px; padding: 0 0 3px; border-radius: 50%; display: grid; place-items: center; font-size: 30px;
+  background: rgba(30, 32, 40, 0.5); border: 1px solid rgba(255,255,255,.1);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+}
+body.is-workout.nav-compact .topbar { transform: none; opacity: 1; pointer-events: none; }
+body.is-workout #app { padding-top: calc(var(--safe-top) + 58px); }
