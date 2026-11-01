@@ -180,7 +180,8 @@ function techSheet(ex, wk, { back } = {}) {
     subtitle: [...new Set([ex.block, ex.group && ex.group.length > 1 ? ex.group : ex.group ? "Superserie " + ex.group : ""].filter(Boolean))].map(esc).join(" · "),
     back,
     body: `
-      <div class="sheet-chips">${chips}${ex.rpe ? `<span class="sheet-chip rpe">RPE ${esc(ex.rpe)}</span>` : ""}</div>
+      <div class="sheet-chips">${chips}</div>
+      ${ex.rpe ? `<p class="rpe-goal small-goal"><b>${esc(rpePlain(ex.rpe, !!ex.time).short)}</b> · ${esc(rpePlain(ex.rpe, !!ex.time).long)}</p>` : ""}
       ${ex.notes ? `<p class="sheet-notes">${esc(ex.notes)}</p>` : ""}
       <div class="sheet-video">${videoHtml(ex)}</div>`,
   });
@@ -249,14 +250,81 @@ function daySheet(di) {
   });
 }
 
-function rpeSheet() {
-  const rows = (plan.rpe || [])
-    .map(([r, d]) => `<div class="row between hist-row"><b class="rpe-n">${esc(r)}</b><span class="grow">${esc(d)}</span></div>`)
-    .join("");
+
+// ============================================================
+//  RPE en lenguaje simple
+//  RPE = qué tan duro (1–10). Lo práctico: 10 − RPE = repeticiones que te quedan.
+// ============================================================
+const RPE_SCALE = [
+  ["10", "0", "Al límite: no podrías hacer ni una más"],
+  ["9.5", "0", "Ninguna más, pero podrías subir un poco el peso"],
+  ["9", "1", "Te queda 1 en el tanque"],
+  ["8.5", "1–2", "Te quedan 1 o 2"],
+  ["8", "2", "Te quedan 2: duro pero controlado"],
+  ["7.5", "2–3", "Te quedan 2 o 3"],
+  ["7", "3", "Te quedan 3: exigente y cómodo"],
+  ["5–6", "4–6", "Te quedan varias: ritmo de trabajo"],
+  ["3–4", "+6", "Suave, como calentamiento"],
+  ["1–2", "—", "Casi sin esfuerzo"],
+];
+
+// "8-9" → { lo: 8, hi: 9 }
+function rpeRange(rpe) {
+  const n = String(rpe).split(/[-–]/).map((x) => parseFloat(x.replace(",", "."))).filter((x) => !isNaN(x));
+  return n.length ? { lo: Math.min(...n), hi: Math.max(...n) } : null;
+}
+
+// Texto corto y largo para un objetivo de RPE
+function rpePlain(rpe, timed = false) {
+  const r = rpeRange(rpe);
+  if (!r) return { short: `RPE ${rpe}`, long: "" };
+  if (timed) {
+    const v = r.hi;
+    const short = v >= 9.5 ? "Hasta el límite" : v >= 9 ? "Casi al límite" : v >= 8 ? "Exigente, con margen" : "Firme y cómodo";
+    const long =
+      v >= 9
+        ? "Al terminar el tiempo deberías sentir que casi no aguantabas más."
+        : v >= 8
+        ? "Al terminar deberías sentir que podías aguantar unos segundos más, no muchos."
+        : "Debería costar, pero terminar con bastante margen.";
+    return { short, long };
+  }
+  const a = Math.max(0, Math.round(10 - r.hi)), b = Math.max(0, Math.round(10 - r.lo));
+  if (b === 0) return { short: "Hasta el límite", long: "Termina sin poder hacer otra repetición con buena técnica." };
+  const n = a === b ? `${a}` : `${a}–${b}`;
+  const reps = a === b && a === 1 ? "repetición" : "repeticiones";
+  return {
+    short: `Deja ${n} en reserva`,
+    long: `Elige un peso con el que, al terminar, sientas que podrías hacer ${a === b ? a : `${a} o ${b}`} ${reps} más con buena técnica. Si podías bastantes más, sube el peso; si no llegas a las repeticiones, bájalo.`,
+  };
+}
+
+function rpeTableHtml(highlight) {
+  const hl = rpeRange(highlight);
+  return `<div class="rpe-table">
+    <div class="rpe-th"><span>RPE</span><span>Te quedan</span><span>Cómo se siente</span></div>
+    ${RPE_SCALE.map(([r, rir, d]) => {
+      const rr = rpeRange(r);
+      const on = hl && rr && rr.hi >= hl.lo && rr.lo <= hl.hi;
+      return `<div class="rpe-tr ${on ? "on" : ""}"><b>${r}</b><span>${rir}</span><span>${esc(d)}</span></div>`;
+    }).join("")}
+  </div>`;
+}
+
+const RPE_INTRO = `<p class="rpe-intro"><b>RPE</b> es qué tan duro fue, del 1 al 10. La forma fácil de leerlo:
+  <b>10 − RPE = cuántas repeticiones más podrías haber hecho</b> con buena técnica al terminar la serie.
+  Por ejemplo, RPE 8 → te deberían quedar 2.</p>`;
+
+// Panel RPE: si viene de un ejercicio, explica ese objetivo y lo marca en la tabla
+function rpeSheet(ex) {
+  const plain = ex ? rpePlain(ex.rpe, !!ex.time) : null;
   openSheet({
-    title: "Tabla RPE",
-    subtitle: "RIR = repeticiones que te quedan en reserva",
-    body: `<div>${rows}</div>`,
+    title: ex ? plain.short : "Esfuerzo (RPE)",
+    subtitle: ex ? `${esc(ex.name)} · RPE ${esc(ex.rpe)}` : "Qué tan duro debería sentirse",
+    body: `
+      ${ex ? `<p class="rpe-goal">${esc(plain.long)}</p>` : ""}
+      ${RPE_INTRO}
+      ${rpeTableHtml(ex ? ex.rpe : null)}`,
   });
 }
 
@@ -373,7 +441,7 @@ function exTarget(ex, wk) {
   parts.push(`${setsOf(ex, wk)} ${setsOf(ex, wk) === 1 ? "serie" : "series"}`);
   if (ex.time) parts.push(`${ex.time} s${ex.perSide ? " c/lado" : ""}`);
   else if (ex.reps) parts.push(`${ex.reps} reps${ex.perSide ? " c/lado" : ""}`);
-  if (ex.rpe) parts.push(`RPE ${ex.rpe}`);
+  if (ex.rpe) parts.push(rpePlain(ex.rpe, !!ex.time).short.toLowerCase());
   if (ex.weight) parts.push(ex.weight);
   return parts.join(" · ");
 }
@@ -957,7 +1025,7 @@ function renderHome() {
 const TABS = [
   ["home", "home", "Inicio"],
   ["history", "history", "Historial"],
-  ["rpe", "gauge", "RPE"],
+  ["rpe", "gauge", "Esfuerzo"],
   ["settings", "settings", "Ajustes"],
 ];
 const $tabbar = document.createElement("nav");
@@ -1479,7 +1547,7 @@ function renderWorkout() {
     <h2 class="ex-name">${esc(ex.name)}</h2>
     <div class="ex-meta">
       ${target ? `<span>${esc(target)}</span>` : ""}
-      ${ex.rpe ? `<button class="rpe-chip" data-act="rpe" aria-label="Ver tabla RPE">RPE ${esc(ex.rpe)}</button>` : ""}
+      ${ex.rpe ? `<button class="rpe-chip" data-act="rpe" aria-label="Qué significa este esfuerzo">${esc(rpePlain(ex.rpe, !!ex.time).short)} ${icon("info")}</button>` : ""}
       <button class="tech-chip ${state === "prep" ? "hint" : ""}" data-act="tech" aria-label="Ver técnica: notas y video">${icon("play")} Técnica</button>
     </div>
 
@@ -1600,7 +1668,7 @@ function renderWorkout() {
     skipRest: () => beginWork(true),
     prevEx: () => jumpStep(-1),
     nextEx: () => jumpStep(1),
-    rpe: () => rpeSheet(),
+    rpe: () => rpeSheet(ex),
     tech: () => techSheet(ex, weekSets()),
     finish: async () => {
       if (await ask("¿Terminar y guardar el entrenamiento?")) finishSession();
@@ -1669,18 +1737,13 @@ function paintLive() {
 //  RPE
 // ============================================================
 function renderRpe() {
-  setHeader("Tabla RPE", true);
-  const rows = (plan.rpe || [])
-    .map(([r, d]) => `<div class="row between hist-row"><b class="rpe-n">${esc(r)}</b><span class="grow">${esc(d)}</span></div>`)
-    .join("");
+  setHeader("Esfuerzo (RPE)", true);
   $app.innerHTML = `
-    <div class="card">
-      <div class="card-title">Percepción de esfuerzo</div>
-      <p class="muted small">RIR = repeticiones en reserva (cuántas más podrías haber hecho).</p>
-      ${rows}
-    </div>
-    ${route.from === "workout" ? `<button class="btn primary full big mt" data-act="back">Volver al ejercicio</button>` : ""}`;
-  bindActs({ back: () => go("workout") });
+    <section class="card rpe-card">
+      ${RPE_INTRO}
+      ${rpeTableHtml(null)}
+      <p class="muted small rpe-tip">Para ajustar el peso: si al terminar sientes que te quedaban <b>más</b> de las indicadas, súbelo la próxima serie; si te quedaban <b>menos</b> (o no llegaste), bájalo.</p>
+    </section>`;
 }
 
 

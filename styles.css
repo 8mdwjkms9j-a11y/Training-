@@ -866,3 +866,21 @@ body.is-workout .workout-foot { padding-bottom: 0; }
 
 /* tabla RPE: descripción en texto normal, alineada a la izquierda */
 .hist-row .rpe-n + span { color: var(--text); text-align: left; font-variant-numeric: normal; }
+
+/* ---------- RPE en lenguaje simple ---------- */
+.rpe-chip { display: inline-flex; align-items: center; gap: 5px; }
+.rpe-chip .ico { width: 14px; height: 14px; }
+.rpe-intro { margin: 0 0 14px; font-size: 15px; line-height: 1.5; color: #dedbd4; }
+.rpe-intro b { color: var(--text); }
+.rpe-goal { margin: 0 0 14px; padding: 12px 14px; border-radius: 14px; font-size: 15px; line-height: 1.5;
+  background: color-mix(in srgb, var(--rpe) 10%, transparent); border: 1px solid color-mix(in srgb, var(--rpe) 35%, transparent); }
+.rpe-goal.small-goal { font-size: 14px; margin: 0; }
+.rpe-goal b { color: var(--rpe); }
+.rpe-table { display: grid; border-top: 1px solid var(--line); }
+.rpe-th, .rpe-tr { display: grid; grid-template-columns: 52px 74px 1fr; gap: 10px; align-items: baseline; padding: 9px 8px; border-bottom: 1px solid var(--line); }
+.rpe-th { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.rpe-tr b { font: 700 20px/1 var(--font-display); color: var(--rpe); }
+.rpe-tr span:nth-child(2) { font: 600 18px/1 var(--font-display); }
+.rpe-tr span:last-child { font-size: 14px; color: #dedbd4; }
+.rpe-tr.on { background: color-mix(in srgb, var(--rpe) 12%, transparent); border-radius: 10px; border-bottom-color: transparent; }
+.rpe-tip { margin: 14px 0 0; }
