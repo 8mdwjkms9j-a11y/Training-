@@ -1013,30 +1013,47 @@ input, select, textarea { font-size: max(16px, 1em); }
 .rep-counter .side-in { width: 30px; height: 30px; margin-top: 6px; font: 700 17px/1 var(--font-display); font-style: normal; color: var(--text); letter-spacing: 0; }
 
 /* =========================================================
-   DESCANSO / PREPÁRATE: líquido lento
-   Tres manchas de luz con los colores del estado se desplazan muy lento,
-   cada una con su propio recorrido al azar. Solo transform: liviano.
+   DESCANSO / PREPÁRATE: líquido
+   Cuatro manchas elípticas con los colores del estado: se mueven, giran y
+   se estiran por recorridos al azar, y al cruzarse se mezclan (screen).
+   Cada una tiene zonas densas y zonas casi transparentes: degradado orgánico.
+   Solo transform: liviano.
    ========================================================= */
+.pulse-field i:nth-child(4) { display: none; }
 .phase.liquid .pulse-field i:nth-child(n) {
-  display: block; opacity: 1; margin: 0; width: 120%; aspect-ratio: 1; border-radius: 50%;
-  animation: drift var(--dur, 20s) ease-in-out infinite alternate;
+  display: block; opacity: 1; margin: 0; width: 110%; aspect-ratio: 1; border-radius: 50%;
+  mix-blend-mode: screen;
+  animation: drift var(--dur, 11s) cubic-bezier(.45, .05, .55, .95) infinite alternate;
 }
 .phase.liquid .pulse-field i:nth-child(1) {
-  left: -35%; top: -30%;
-  background: radial-gradient(circle, color-mix(in srgb, var(--sa) 30%, transparent) 0%, color-mix(in srgb, var(--sa) 13%, transparent) 40%, transparent 70%);
+  left: -30%; top: -28%;
+  background:
+    radial-gradient(ellipse 46% 30% at 38% 44%, color-mix(in srgb, var(--sa) 48%, transparent), transparent 70%),
+    radial-gradient(ellipse 30% 42% at 66% 60%, color-mix(in srgb, var(--sa) 28%, transparent), transparent 72%);
 }
 .phase.liquid .pulse-field i:nth-child(2) {
-  left: 25%; top: 5%;
-  background: radial-gradient(circle, color-mix(in srgb, var(--sb) 26%, transparent) 0%, color-mix(in srgb, var(--sb) 11%, transparent) 42%, transparent 70%);
+  left: 28%; top: 0%;
+  background:
+    radial-gradient(ellipse 40% 28% at 52% 40%, color-mix(in srgb, var(--sb) 42%, transparent), transparent 70%),
+    radial-gradient(ellipse 22% 36% at 30% 66%, color-mix(in srgb, var(--sb) 22%, transparent), transparent 75%);
 }
 .phase.liquid .pulse-field i:nth-child(3) {
-  left: -20%; top: 40%;
-  background: radial-gradient(circle, color-mix(in srgb, var(--sc) 24%, transparent) 0%, color-mix(in srgb, var(--sc) 10%, transparent) 42%, transparent 70%);
+  left: -22%; top: 38%;
+  background:
+    radial-gradient(ellipse 44% 26% at 50% 50%, color-mix(in srgb, var(--sc) 40%, transparent), transparent 70%),
+    radial-gradient(ellipse 26% 20% at 72% 34%, color-mix(in srgb, var(--sc) 25%, transparent), transparent 76%);
+}
+.phase.liquid .pulse-field i:nth-child(4) {
+  left: 30%; top: 46%;
+  background:
+    radial-gradient(ellipse 34% 24% at 46% 52%, color-mix(in srgb, var(--sa) 28%, var(--sb) 10%), transparent 72%);
+  opacity: .8;
 }
 @keyframes drift {
-  0%   { transform: translate(var(--x0), var(--y0)) scale(var(--s0)); }
-  50%  { transform: translate(var(--x1), var(--y1)) scale(var(--s1)); }
-  100% { transform: translate(var(--x2), var(--y2)) scale(var(--s2)); }
+  0%   { transform: translate(var(--x0), var(--y0)) rotate(var(--r0)) scale(var(--a0), var(--b0)); }
+  33%  { transform: translate(var(--x1), var(--y1)) rotate(var(--r1)) scale(var(--a1), var(--b1)); }
+  66%  { transform: translate(var(--x2), var(--y2)) rotate(var(--r2)) scale(var(--a2), var(--b2)); }
+  100% { transform: translate(var(--x3), var(--y3)) rotate(var(--r3)) scale(var(--a3), var(--b3)); }
 }
 /* descanso en pausa: el líquido se queda quieto y más tenue */
 .phase.still.liquid .pulse-field { opacity: .45; }
