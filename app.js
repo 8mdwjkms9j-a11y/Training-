@@ -759,6 +759,7 @@ function ctxReady() {
 }
 
 function beep(freq = 880, dur = 0.15, times = 1, vol = 0.5) {
+  if (!audioCtx) unlockAudio();
   if (!ctxReady()) return;
   for (let i = 0; i < times; i++) {
     const t = audioCtx.currentTime + 0.01 + i * (dur + 0.08);
@@ -780,7 +781,7 @@ function beep(freq = 880, dur = 0.15, times = 1, vol = 0.5) {
 //  start  = empieza el ejercicio (o el otro lado)
 //  end    = termina el ejercicio (o un lado)
 //  finish = termina el entrenamiento
-const SFX = { count: [660, 0.1, 1, 0.45], start: [990, 0.2, 1, 0.5], end: [1175, 0.2, 2, 0.5], finish: [1320, 0.18, 3, 0.45] };
+const SFX = { count: [660, 0.12, 1, 0.7], start: [990, 0.22, 1, 0.75], end: [1175, 0.2, 2, 0.75], finish: [1320, 0.18, 3, 0.7] };
 // Cada pitido se genera una vez como un WAV corto y se reproduce con <audio>:
 // en iOS sigue sonando aunque la voz o el sistema interrumpan el motor Web Audio.
 function toneWavUrl(kind) {
@@ -819,7 +820,7 @@ function sfxEl(kind) {
 // iOS exige un toque para habilitar cada sonido: se "desbloquean" en silencio al empezar
 let sfxUnlocked = false;
 function unlockSfx() {
-  if (sfxUnlocked) return;
+  if (sfxUnlocked || !prefs.soloAudio) return;
   sfxUnlocked = true;
   Object.keys(SFX).forEach((k) => {
     const a = sfxEl(k);
@@ -835,9 +836,9 @@ function unlockSfx() {
 }
 function sfx(kind) {
   if (!prefs.sound) return;
-  // Sin la API de sesión de audio, un <audio> tomaría el control y pausaría tu música:
-  // en ese caso usamos el motor Web Audio, que se mezcla.
-  if (!navigator.audioSession && !prefs.soloAudio) {
+  // Modo música (por defecto): un <audio> tomaría el control del audio y pausaría tu música.
+  // El motor Web Audio se mezcla con otras apps, así que los pitidos van por ahí.
+  if (!prefs.soloAudio) {
     const [f, d, n, v] = SFX[kind];
     return beep(f, d, n, v);
   }
@@ -865,7 +866,9 @@ function shieldMedia(ms) {
 }
 
 function say(text) {
-  if (!prefs.voice || !("speechSynthesis" in window)) return;
+  // En iOS, cuando una página habla, el sistema pausa la música de otras apps:
+  // la voz solo se usa con "Prioridad a Entreno".
+  if (!prefs.voice || !prefs.soloAudio || !("speechSynthesis" in window)) return;
   shieldMedia(Math.min(6000, 1800 + text.length * 90));
   // se habla un instante después del cambio de pantalla: primero se dibuja, luego se habla
   clearTimeout(say.t);
@@ -2604,7 +2607,7 @@ function renderSettings() {
       <div class="section-head"><h2>Avisos</h2></div>
       <div class="group">
         ${opt("sound", "Sonidos (pitidos)")}
-        ${opt("voice", "Avisos por voz")}
+        ${opt("voice", "Avisos por voz (solo con Prioridad a Entreno)")}
         ${opt("autoRest", "Iniciar descanso automáticamente")}
         ${opt("autoStart", "Arrancar solo el ejercicio tras prepararse")}
         ${opt("soloAudio", "Prioridad a Entreno: suena con el iPhone en silencio y muestra el panel en pantalla bloqueada y Apple Watch (pausa la música de otras apps)")}
@@ -2619,7 +2622,7 @@ function renderSettings() {
       </div>
       <p class="muted small">Cuenta regresiva para acomodarte antes de cada ejercicio nuevo. Si el descanso de la pauta es más largo, se usa ese.</p>
       <button class="btn ghost full mt" data-act="test">Probar sonido</button>
-      <p class="muted small">Suenan solo: la cuenta 3-2-1 de "Prepárate", el inicio y el término de cada ejercicio (y de cada lado), y el final del entrenamiento. Por defecto se mezclan con tu música sin pausarla; si el iPhone está en silencio no se escuchan (activa "Prioridad a Entreno" para eso).</p>
+      <p class="muted small">Suenan solo: la cuenta 3-2-1 de "Prepárate", el inicio y el término de cada ejercicio (y de cada lado), y el final del entrenamiento. Por defecto se mezclan con tu música sin pausarla; para escucharlos, el iPhone no debe estar en modo silencio. La voz está desactivada en este modo porque en iOS hablar pausa la música de otras apps.</p>
       <p class="muted small">Con <b>Prioridad a Entreno</b> verás el ejercicio y lo que sigue en <b>Ahora suena</b> (pantalla bloqueada, Dynamic Island y Apple Watch) y podrás pausar (⏯) o pasar a lo siguiente (⏭) desde ahí.</p>
     </section>
     <section class="section">
@@ -2866,4 +2869,4 @@ if (session && (!session.steps || !plan.days[session.dayIndex])) {
 render();
 checkForUpdate();
 // prepara los sonidos en un momento libre, para que "Empezar" responda al instante
-(window.requestIdleCallback || ((f) => setTimeout(f, 1200)))(() => Object.keys(SFX).forEach(sfxEl));
+(window.requestIdleCallback || ((f) => setTimeout(f, 1200)))(() => prefs.soloAudio && Object.keys(SFX).forEach(sfxEl));
