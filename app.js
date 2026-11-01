@@ -1574,7 +1574,8 @@ function currentSide(ex, st) {
 function sideTagHtml(ex, st) {
   const sd = currentSide(ex, st);
   if (!sd) return "";
-  return `<span class="side-tag s${sd}" id="sideTag">${sd === 1 ? "→" : "←"} Lado ${SIDE_NAME[sd]}</span>`;
+  // dentro del círculo, bajo el número: R (right) / L (left)
+  return `<em class="side-in s${sd}" id="sideTag" aria-label="Lado ${SIDE_NAME[sd]}">${sd === 1 ? "R" : "L"}</em>`;
 }
 
 function renderWorkout() {
@@ -1625,14 +1626,14 @@ function renderWorkout() {
   let center, caption = "", tools = "", primary = "";
   if (isRest) {
     const kind = session.restKind || (st.side === 2 ? "side" : "rest");
-    center = ringHtml();
-    caption = kind === "side" ? `Ahora el lado <b>${SIDE_NAME[st.side]}</b>` : `Sigue: <b>${esc(ex.name)}</b>${st.side ? ` · lado ${SIDE_NAME[st.side]}` : ""} · ${setTxt.toLowerCase()}`;
+    center = ringHtml(ex.perSide && st.side ? sideTagHtml(ex, st) : "");
+    caption = kind === "side" ? `Ahora <b>${st.side === 1 ? "R" : "L"}</b>` : `Sigue: <b>${esc(ex.name)}</b>${st.side ? ` · ${st.side === 1 ? "R" : "L"}` : ""} · ${setTxt.toLowerCase()}`;
     tools = `${ib("minus15", "minus15", "Restar 15 segundos")}${ib("pause", session.timer?.running ? "pause" : "play", session.timer?.running ? "Pausar" : "Seguir")}${ib("plus15", "plus15", "Sumar 15 segundos")}`;
     primary = `<button class="btn primary full big" data-act="skipRest">${kind === "prep" ? "Estoy listo" : kind === "side" ? "Listo, sigo" : "Saltar descanso"}</button>`;
   } else if (isTimed) {
     const t = session.timer;
-    center = t ? ringHtml() : `<div class="ring" id="ring" style="--p:0"><div class="ring-num" id="bigTime">${fmt(ex.time)}</div></div>`;
-    caption = st.side ? `de ${ex.time} s · ${st.side === 1 ? "luego el izquierdo" : "último lado"}` : `de ${ex.time} s`;
+    center = t ? ringHtml(sideTagHtml(ex, st)) : `<div class="ring" id="ring" style="--p:0"><div class="ring-num"><span id="bigTime">${fmt(ex.time)}</span>${sideTagHtml(ex, st)}</div></div>`;
+    caption = st.side ? `de ${ex.time} s · ${st.side === 1 ? "luego L" : "último lado"}` : `de ${ex.time} s`;
     if (t) {
       tools = `${ib("pause", t.running ? "pause" : "play", t.running ? "Pausar" : "Seguir")}${ib("plus15", "plus15", "Sumar 15 segundos")}${ib("resetTimed", "reset", "Reiniciar")}`;
       primary = `<button class="btn primary full big" data-act="doneTimed">Listo</button>`;
@@ -1641,7 +1642,7 @@ function renderWorkout() {
     const m = session.metro;
     center = `<button class="rep-counter ${m && m.running ? "metro-on" : ""}" id="repBtn" data-act="${m ? (m.running ? "" : "metroToggle") : "repPlus"}" aria-label="${m ? (m.running ? "Conteo en curso" : "Seguir conteo") : "Sumar repetición"}">
         ${m ? `<svg class="rep-arc" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="47" pathLength="100"/></svg>` : ""}
-        <span id="repNum">${session.reps}</span><small>/ ${ex.reps}</small></button>`;
+        <span id="repNum">${session.reps}</span><small>/ ${ex.reps}</small>${sideTagHtml(ex, st)}</button>`;
     caption = `<span id="metroStatus">${m ? metroStatusText(ex) : "Toca el círculo para contar a mano"}</span>`;
     tools = m
       ? `${ib("metroToggle", m.running ? "pause" : "play", m.running ? "Pausar" : "Seguir")}${ib("metroReset", "reset", "Reiniciar")}${tempoCtl()}`
@@ -1652,7 +1653,7 @@ function renderWorkout() {
   } else {
     const kg = lastKg[ex.name] ?? lastWeightLog(ex.name)?.kg ?? "";
     center = `<button class="rep-counter" id="repBtn" data-act="repPlus" aria-label="Sumar repetición">
-        <span id="repNum">${session.reps}</span><small>${ex.reps ? `/ ${ex.reps}` : "reps"}</small></button>`;
+        <span id="repNum">${session.reps}</span><small>${ex.reps ? `/ ${ex.reps}` : "reps"}</small>${sideTagHtml(ex, st)}</button>`;
     caption = `Toca el círculo en cada repetición · <span id="setClock">${fmt((Date.now() - session.setStartedAt) / 1000)}</span>`;
     tools = `${ib("repMinus", "minus", "Restar una repetición")}${
       ex.rpe
@@ -1680,7 +1681,6 @@ function renderWorkout() {
         <div class="state-pill" role="status"><i></i><span id="stateTxt">${STATE_LABEL[state] || ""}</span></div>
         <div class="set-info">${setTxt}${setDotsHtml}</div>
       </header>
-      ${ex.perSide ? `<div class="side-row">${sideTagHtml(ex, st)}</div>` : ""}
       <div class="phase-center">${center}</div>
       <p class="phase-caption">${caption}</p>
       ${tools ? `<div class="tools">${tools}</div>` : ""}
@@ -1843,23 +1843,23 @@ function metroStatusText(ex) {
   if (!m) return "";
   if (m.switchUntil) {
     const left = Math.max(0, Math.ceil(((m.running ? m.switchUntil - Date.now() : m.switchLeft)) / 1000));
-    return `Cambia al lado izquierdo · ${left}`;
+    return `Cambia a L · ${left}`;
   }
   if (!m.running) return "En pausa · toca el círculo para seguir";
   const sides = metroSides(ex);
-  if (ex.alternate) return "Alterna: derecho e izquierdo";
+  if (ex.alternate) return "Alterna R / L";
   if (Date.now() < m.t0) return "Prepárate…";
-  return sides > 1 ? (m.side === 1 ? "Sigue el conteo · luego el izquierdo" : "Sigue el conteo · último lado") : "Sigue el conteo";
+  return sides > 1 ? (m.side === 1 ? "Sigue el conteo · luego L" : "Sigue el conteo · último lado") : "Sigue el conteo";
 }
 
 // El anillo avanza con una animación CSS lineal hasta el final del tiempo:
 // fluido a 60 fps y se detiene/reanuda con el temporizador.
-function ringHtml() {
+function ringHtml(extra = "") {
   const t = session.timer;
   const left = timerLeft();
   const p0 = t && t.total ? Math.min(100, Math.max(0, (1 - left / t.total) * 100)) : 0;
   const anim = t && t.running ? ` anim" style="--p0:${p0.toFixed(2)};--p:${p0.toFixed(2)};--dur:${left.toFixed(2)}s` : `" style="--p:${p0.toFixed(2)}`;
-  return `<div class="ring${anim}" id="ring"><div class="ring-num" id="bigTime">${fmt(left)}</div></div>`;
+  return `<div class="ring${anim}" id="ring"><div class="ring-num"><span id="bigTime">${fmt(left)}</span>${extra}</div></div>`;
 }
 
 function adjustTimer(delta) {
@@ -1881,10 +1881,11 @@ function paintLive() {
     const tag = document.getElementById("sideTag");
     if (tag) {
       const sd = currentSide(curEx(), curStep());
-      const txt = `${sd === 1 ? "→" : "←"} Lado ${SIDE_NAME[sd]}`;
+      const txt = sd === 1 ? "R" : "L";
       if (tag.textContent !== txt) {
         tag.textContent = txt;
-        tag.className = `side-tag s${sd} flip`;
+        tag.className = `side-in s${sd} flip`;
+        tag.setAttribute("aria-label", `Lado ${SIDE_NAME[sd]}`);
       }
     }
   }
@@ -2658,7 +2659,7 @@ function updateNowPlaying(force = false) {
     else if (session.metro?.switchUntil) prog = "Cambia de lado";
     else prog = `${session.reps}/${ex.reps || "–"}`;
     const sd = currentSide(ex, st);
-    title = `${prog} · ${ex.name}${sd ? ` · ${SIDE_LABEL[sd]}` : ""}`;
+    title = `${prog} · ${ex.name}${sd ? ` · ${sd === 1 ? "R" : "L"}` : ""}`;
     const nxt = session.steps.slice(session.i + 1).find((x) => x.ex !== st.ex);
     artist = `${setTxt}${nxt ? ` · Sigue: ${day.exercises[nxt.ex].name}` : " · Último ejercicio"}`;
   }

@@ -997,3 +997,16 @@ input, select, textarea { font-size: max(16px, 1em); }
 .side-row { display: flex; justify-content: center; margin: -2px 0 -4px; }
 .side-row .side-tag { font-size: 13px; padding: 6px 14px; letter-spacing: .08em; }
 .phase.morph > .side-row { animation: item-in .28s var(--ease-out) both .02s; }
+
+/* ---------- lado dentro del círculo: R / L ---------- */
+.ring-num { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+.side-in {
+  display: grid; place-items: center; width: 30px; height: 30px; margin-top: 6px; border-radius: 50%;
+  font: 700 17px/1 var(--font-display); font-style: normal; letter-spacing: 0;
+  color: var(--text); background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.18);
+}
+.ring-num .side-in { margin-top: 2px; width: 26px; height: 26px; font-size: 15px; }
+.side-in.s2 { background: color-mix(in srgb, var(--sc) 26%, transparent); border-color: color-mix(in srgb, var(--sc) 55%, transparent); }
+.side-in.flip { animation: center-in .32s var(--ease-spring) both; }
+
+.rep-counter .side-in { width: 30px; height: 30px; margin-top: 6px; font: 700 17px/1 var(--font-display); font-style: normal; color: var(--text); letter-spacing: 0; }
